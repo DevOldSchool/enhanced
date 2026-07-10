@@ -1,0 +1,11 @@
+package com.inspect.npc;
+
+import lombok.Value;
+
+@Value
+class NpcWikiLookup
+{
+	String page;
+	String anchor;
+	String sourceUrl;
+}

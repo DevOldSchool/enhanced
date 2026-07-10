@@ -1,6 +1,6 @@
-# Enhanced
+# Inspect
 
-Enhanced is a RuneLite plugin for optional Old School RuneScape inspect tools. It adds a single sidebar panel for looking up items, NPCs, players, and recent inspections.
+Inspect is a RuneLite plugin for optional Old School RuneScape inspect tools. It adds a single sidebar panel for looking up items, NPCs, players, and recent inspections.
 
 Most features are backed by OSRS Wiki data. Enable OSRS Wiki lookups once in the plugin config, then the individual wiki-backed features are available by default and can be disabled separately.
 

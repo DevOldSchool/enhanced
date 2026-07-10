@@ -13,7 +13,7 @@ repositories {
 }
 
 def runeLiteVersion = 'latest.release'
-def pluginMainClass = 'com.enhanced.EnhancedPluginTest'
+def pluginMainClass = 'com.inspect.InspectPluginTest'
 
 dependencies {
 	compileOnly group: 'net.runelite', name:'client', version: runeLiteVersion
@@ -26,7 +26,7 @@ dependencies {
 	testImplementation group: 'net.runelite', name:'jshell', version: runeLiteVersion
 }
 
-group = 'com.enhanced'
+group = 'com.inspect'
 
 tasks.withType(JavaCompile).configureEach {
 	options.encoding = 'UTF-8'
