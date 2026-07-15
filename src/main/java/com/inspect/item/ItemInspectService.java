@@ -87,12 +87,25 @@ public class ItemInspectService
 
 	public CompletableFuture<ItemInspectInfo> search(String query)
 	{
+		return search(query, 0);
+	}
+
+	public CompletableFuture<ItemInspectInfo> search(String query, int ttlDays)
+	{
 		if (query == null || query.trim().isEmpty())
 		{
 			return CompletableFuture.completedFuture(null);
 		}
 
-		return searchPage(query.trim())
+		String normalizedQuery = query.trim();
+		long now = System.currentTimeMillis() / 1000L;
+		return cache.getBySearchTerm(normalizedQuery, now, ttlDays)
+			.thenCompose(cached -> cached.map(CompletableFuture::completedFuture).orElseGet(() -> searchWiki(normalizedQuery)));
+	}
+
+	private CompletableFuture<ItemInspectInfo> searchWiki(String query)
+	{
+		return searchPage(query)
 			.thenCompose(page ->
 			{
 				if (page == null)
@@ -100,14 +113,14 @@ public class ItemInspectService
 					return CompletableFuture.completedFuture(null);
 				}
 
-					ItemWikiLookup lookup = new ItemWikiLookup(page, null, wikiBase.newBuilder()
+				ItemWikiLookup lookup = new ItemWikiLookup(page, null, wikiBase.newBuilder()
 					.addPathSegment("w")
 					.addPathSegment(page)
 					.build()
 					.toString());
 
 				return fetchWikitext(lookup)
-					.thenApply(wikitext -> parser.parse(-1, query.trim(), lookup, wikitext))
+					.thenApply(wikitext -> parser.parse(-1, query, lookup, wikitext))
 					.thenCompose(info ->
 					{
 						if (info == null)

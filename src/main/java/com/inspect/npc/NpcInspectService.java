@@ -95,12 +95,25 @@ public class NpcInspectService
 
 	public CompletableFuture<NpcCombatInfo> search(String query)
 	{
+		return search(query, 7);
+	}
+
+	public CompletableFuture<NpcCombatInfo> search(String query, int ttlDays)
+	{
 		if (query == null || query.trim().isEmpty())
 		{
 			return CompletableFuture.completedFuture(null);
 		}
 
-		return searchPage(query.trim())
+		String normalizedQuery = query.trim();
+		long now = System.currentTimeMillis() / 1000L;
+		return cache.getBySearchTerm(normalizedQuery, now, ttlDays)
+			.thenCompose(cached -> cached.map(CompletableFuture::completedFuture).orElseGet(() -> searchWiki(normalizedQuery)));
+	}
+
+	private CompletableFuture<NpcCombatInfo> searchWiki(String query)
+	{
+		return searchPage(query)
 			.thenCompose(page ->
 			{
 				if (page == null)
@@ -108,7 +121,7 @@ public class NpcInspectService
 					return CompletableFuture.completedFuture(null);
 				}
 
-					NpcWikiLookup lookup = new NpcWikiLookup(page, null, wikiBase.newBuilder()
+				NpcWikiLookup lookup = new NpcWikiLookup(page, null, wikiBase.newBuilder()
 					.addPathSegment("w")
 					.addPathSegment(page)
 					.build()

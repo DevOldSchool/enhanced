@@ -6,6 +6,8 @@ import com.inspect.item.ItemPriceSummary;
 import com.inspect.npc.CombatStyleRecommendation;
 import com.inspect.npc.EquipmentRecommendation;
 import com.inspect.npc.NpcCombatInfo;
+import com.inspect.npc.NpcItemRequirementAlternativeStatus;
+import com.inspect.npc.NpcItemRequirementStatus;
 import com.inspect.player.PlayerEquipmentComparison;
 import com.inspect.player.PlayerEquipmentItem;
 import com.inspect.player.PlayerInspectAnalysis;
@@ -25,6 +27,8 @@ import java.awt.Image;
 import java.awt.Insets;
 import java.awt.RenderingHints;
 import java.awt.Stroke;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.text.DecimalFormat;
 import java.util.*;
 import javax.inject.Inject;
@@ -55,6 +59,8 @@ public class InspectPanel extends PluginPanel
 {
 	private static final String DASH = "--";
 	private static final String ICON_PATH = "/com/inspect/icons/";
+	private static final String STATUS_CHECK_ICON = "status-check.png";
+	private static final String STATUS_CROSS_ICON = "status-cross.png";
 	private static final String EQUIPMENT_SLOT_PATH = "/com/inspect/equipment-slots/";
 	private static final int MESSAGE_HTML_WIDTH = 190;
 	private static final DecimalFormat DELTA_FORMAT = new DecimalFormat("0.###");
@@ -69,10 +75,12 @@ public class InspectPanel extends PluginPanel
 	@Setter
     private RecentInspectHandler recentInspectHandler;
 	@Setter
-    private ManualCompareHandler manualCompareHandler;
-	@Setter
     private CacheManagementHandler cacheManagementHandler;
+	@Setter
+	private PinnedInspectHandler pinnedInspectHandler;
 	private String activeTab = "Item";
+	private String activeDropFilter = "Valuable";
+	private PinnedInspectState pinnedInspects = PinnedInspectState.empty();
 	private List<String> lastRecentNpcs = new ArrayList<>();
 	private List<String> lastRecentPlayers = new ArrayList<>();
 	private List<RecentInspectEntry> lastRecentItems = new ArrayList<>();
@@ -100,6 +108,34 @@ public class InspectPanel extends PluginPanel
 	public void setRecentItems(List<RecentInspectEntry> recentItems)
 	{
 		lastRecentItems = recentItems == null ? new ArrayList<>() : new ArrayList<>(recentItems);
+	}
+
+	public void setPinnedInspects(PinnedInspectState pinnedInspects)
+	{
+		this.pinnedInspects = pinnedInspects == null ? PinnedInspectState.empty() : pinnedInspects;
+	}
+
+	public void refreshActiveView()
+	{
+		if ("NPC".equals(activeTab) && lastNpcRenderer != null)
+		{
+			lastNpcRenderer.run();
+			return;
+		}
+		if ("Item".equals(activeTab) && lastItemRenderer != null)
+		{
+			lastItemRenderer.run();
+			return;
+		}
+		if ("Player".equals(activeTab) && lastPlayerRenderer != null)
+		{
+			lastPlayerRenderer.run();
+			return;
+		}
+		if ("Recent".equals(activeTab))
+		{
+			showRecentOnly();
+		}
 	}
 
     public void showEmpty()
@@ -144,6 +180,11 @@ public class InspectPanel extends PluginPanel
 		addFullWidth(title("Inspect Search"));
 		addFullWidth(message(disabledMessage));
 		refresh();
+	}
+
+	public boolean isNpcActive()
+	{
+		return "NPC".equals(activeTab);
 	}
 
 	public void showLoading(String npcName)
@@ -203,15 +244,35 @@ public class InspectPanel extends PluginPanel
 
 	public void showInfo(NpcCombatInfo info, EquipmentRecommendation recommendation, String recommendationMessage)
 	{
-		lastNpcRenderer = () -> renderNpcInfo(info, recommendation, recommendationMessage);
-		renderNpcInfo(info, recommendation, recommendationMessage);
+		showInfo(info, recommendation, recommendationMessage, Collections.emptyList());
 	}
 
-	private void renderNpcInfo(NpcCombatInfo info, EquipmentRecommendation recommendation, String recommendationMessage)
+	public void showInfo(NpcCombatInfo info, EquipmentRecommendation recommendation, String recommendationMessage,
+		List<NpcItemRequirementStatus> itemRequirementStatuses)
+	{
+		showInfo(info, recommendation, recommendationMessage, itemRequirementStatuses, Collections.emptyMap());
+	}
+
+	public void showInfo(NpcCombatInfo info, EquipmentRecommendation recommendation, String recommendationMessage,
+		List<NpcItemRequirementStatus> itemRequirementStatuses, Map<String, Integer> dropItemIds)
+	{
+		List<NpcItemRequirementStatus> statuses = itemRequirementStatuses == null
+			? Collections.emptyList()
+			: new ArrayList<>(itemRequirementStatuses);
+		Map<String, Integer> itemIds = dropItemIds == null
+			? Collections.emptyMap()
+			: new LinkedHashMap<>(dropItemIds);
+		lastNpcRenderer = () -> renderNpcInfo(info, recommendation, recommendationMessage, statuses, itemIds);
+		renderNpcInfo(info, recommendation, recommendationMessage, statuses, itemIds);
+	}
+
+	private void renderNpcInfo(NpcCombatInfo info, EquipmentRecommendation recommendation, String recommendationMessage,
+		List<NpcItemRequirementStatus> itemRequirementStatuses, Map<String, Integer> dropItemIds)
 	{
 		activeTab = "NPC";
 		reset();
 		addFullWidth(title(info.valueOrDash(info.getDisplayName())));
+		addPinNpcButton(info);
 		addFullWidth(section("Combat info"));
 		addFullWidth(rows(
 			row("Combat level", info.getCombatLevel()),
@@ -273,8 +334,10 @@ public class InspectPanel extends PluginPanel
 		));
 
 		addNpcWeaknessSummary(info, recommendation);
+		addPinnedNpcComparison(info);
 		addSlayerHelper(info);
-		addDropSummary(info);
+		addDropSummary(info, dropItemIds);
+		addRequiredItems(itemRequirementStatuses);
 		addKillChecklist(info);
 		addEquipmentRecommendation(info, recommendation, recommendationMessage);
 
@@ -288,23 +351,21 @@ public class InspectPanel extends PluginPanel
 
 	public void showItemInfo(ItemInspectInfo info)
 	{
-		showItemInfo(info, null, null, null, null);
+		showItemInfo(info, null, null, null);
 	}
 
-	public void showItemInfo(ItemInspectInfo info, ItemInspectInfo equippedInfo, ItemInspectInfo manualCompareInfo,
-		ItemRequirementSummary requirementSummary, ItemPriceSummary priceSummary)
+	public void showItemInfo(ItemInspectInfo info, ItemInspectInfo equippedInfo, ItemRequirementSummary requirementSummary, ItemPriceSummary priceSummary)
 	{
-		lastItemRenderer = () -> renderItemInfo(info, equippedInfo, manualCompareInfo, requirementSummary, priceSummary);
-		renderItemInfo(info, equippedInfo, manualCompareInfo, requirementSummary, priceSummary);
+		lastItemRenderer = () -> renderItemInfo(info, equippedInfo, requirementSummary, priceSummary);
+		renderItemInfo(info, equippedInfo, requirementSummary, priceSummary);
 	}
 
-	private void renderItemInfo(ItemInspectInfo info, ItemInspectInfo equippedInfo, ItemInspectInfo manualCompareInfo,
-		ItemRequirementSummary requirementSummary, ItemPriceSummary priceSummary)
+	private void renderItemInfo(ItemInspectInfo info, ItemInspectInfo equippedInfo, ItemRequirementSummary requirementSummary, ItemPriceSummary priceSummary)
 	{
 		activeTab = "Item";
 		reset();
 		addFullWidth(title(valueOrDash(info.getDisplayName())));
-		addManualCompareSelector(info, manualCompareInfo);
+		addPinItemButton(info);
 		addFullWidth(section("Item info"));
 		addFullWidth(grid(new StatCell[]{
 			itemCell("Item", info.getItemId(), "")
@@ -382,8 +443,7 @@ public class InspectPanel extends PluginPanel
 		}
 
 		addComparison(info, equippedInfo);
-		addManualComparison(info, manualCompareInfo);
-		addManualCompareButtons(info, manualCompareInfo);
+		addPinnedItemComparison(info);
 
 		if (info.getExamine() != null)
 		{
@@ -413,6 +473,7 @@ public class InspectPanel extends PluginPanel
 		storeRecentPlayersAndItems(recentPlayers, recentItems);
 		reset();
 		addFullWidth(title(playerName == null || playerName.isEmpty() ? "Player" : playerName));
+		addPinPlayerButton(playerName, combatLevel, equipment);
 		addFullWidth(playerSummary(combatLevel, analysis, pvpBlocked));
 
 		if (pvpBlocked)
@@ -424,6 +485,7 @@ public class InspectPanel extends PluginPanel
 		{
 			addPlayerGearTags(equipment);
 			addFullWidth(equipmentLayout(equipment, comparisonsBySlot(analysis)));
+			addPinnedPlayerComparison(playerName, combatLevel, equipment);
 			addPlayerComparison(analysis);
 		}
 		addRecentPlayerInspects();
@@ -482,6 +544,79 @@ public class InspectPanel extends PluginPanel
 		}
 	}
 
+	private void addPinNpcButton(NpcCombatInfo info)
+	{
+		JButton button = panelButton("Compare NPC");
+		button.setToolTipText("Use this NPC as the saved comparison for future NPC inspections.");
+		button.addActionListener(event ->
+		{
+			if (pinnedInspectHandler != null)
+			{
+				pinnedInspectHandler.pinNpc(info);
+			}
+		});
+		addFullWidth(button);
+	}
+
+	private void addPinItemButton(ItemInspectInfo info)
+	{
+		JButton button = panelButton("Compare item");
+		button.setToolTipText("Use this item as the saved comparison for future item inspections.");
+		button.addActionListener(event ->
+		{
+			if (pinnedInspectHandler != null)
+			{
+				pinnedInspectHandler.pinItem(info);
+			}
+		});
+		addFullWidth(button);
+	}
+
+	private void addPinPlayerButton(String playerName, int combatLevel, List<PlayerEquipmentItem> equipment)
+	{
+		JButton button = panelButton("Compare player");
+		button.setToolTipText("Use this player's visible gear as the saved comparison for future player inspections.");
+		button.addActionListener(event ->
+		{
+			if (pinnedInspectHandler != null)
+			{
+				pinnedInspectHandler.pinPlayer(playerName, combatLevel, equipment);
+			}
+		});
+		addFullWidth(button);
+	}
+
+	private void addPinnedNpcComparison(NpcCombatInfo info)
+	{
+		NpcCombatInfo pinned = pinnedInspects.getNpc();
+		if (pinned == null || info == null || Objects.equals(pinned.getDisplayName(), info.getDisplayName()))
+		{
+			return;
+		}
+
+		List<JPanel> rows = new ArrayList<>();
+		rows.add(row("Compare", pinned.valueOrDash(pinned.getDisplayName())));
+		addDeltaRow(rows, "Combat", info.getCombatLevel(), pinned.getCombatLevel(), false);
+		addDeltaRow(rows, "HP", info.getHitpoints(), pinned.getHitpoints(), false);
+		addDeltaRow(rows, "Max hit", info.getMaxHit(), pinned.getMaxHit(), false);
+		addDeltaRow(rows, "Attack", info.getAttack(), pinned.getAttack(), false);
+		addDeltaRow(rows, "Strength", info.getStrength(), pinned.getStrength(), false);
+		addDeltaRow(rows, "Defence", info.getDefence(), pinned.getDefence(), false);
+		addDeltaRow(rows, "Magic", info.getMagic(), pinned.getMagic(), false);
+		addDeltaRow(rows, "Ranged", info.getRanged(), pinned.getRanged(), false);
+		addDeltaRow(rows, "Stab def", info.getStabDefence(), pinned.getStabDefence(), false);
+		addDeltaRow(rows, "Slash def", info.getSlashDefence(), pinned.getSlashDefence(), false);
+		addDeltaRow(rows, "Crush def", info.getCrushDefence(), pinned.getCrushDefence(), false);
+		addDeltaRow(rows, "Magic def", info.getMagicDefence(), pinned.getMagicDefence(), false);
+		if (rows.size() <= 1)
+		{
+			return;
+		}
+
+		addFullWidth(section("Compared to NPC"));
+		addFullWidth(rows(rows.toArray(new JPanel[0])));
+	}
+
 	private void addNpcWeaknessSummary(NpcCombatInfo info, EquipmentRecommendation recommendation)
 	{
 		List<JPanel> rows = new ArrayList<>();
@@ -528,31 +663,296 @@ public class InspectPanel extends PluginPanel
 			addFullWidth(rows(slayerRows));
 		}
 
-		List<String> assignedBy = splitNameTags(info.getAssignedBy());
+		List<String> assignedBy = splitTags(info.getAssignedBy());
 		if (!assignedBy.isEmpty())
 		{
 			addFullWidth(section("Assigned by"));
-			addFullWidth(chips(assignedBy));
+			addFullWidth(wikiChips(assignedBy));
 		}
 	}
 
-	private void addDropSummary(NpcCombatInfo info)
+	private void addDropSummary(NpcCombatInfo info, Map<String, Integer> dropItemIds)
 	{
-		if (!hasAny(info.getNotableDrops(), info.getRareDrops()))
+		List<DropFilterOption> filters = dropFilterOptions(info);
+		if (filters.isEmpty())
 		{
 			return;
 		}
 
-		addFullWidth(section("Drop summary"));
-		addFullWidth(rows(nonEmptyRows(
-			"Uniques", info.getUniqueDrops(),
-			"Alchables", info.getAlchableDrops(),
-			"Clues", info.getClueDrops(),
-			"Resources", info.getResourceDrops(),
-			"Supplies", info.getSupplyDrops(),
-			"Notable", info.getNotableDrops(),
-			"Rare", info.getRareDrops()
-		)));
+		DropFilterOption selected = selectedDropFilter(filters);
+		addFullWidth(section("Drop filters"));
+		addFullWidth(dropFilterButtons(filters, selected));
+		addFullWidth(dropItemsPanel(selected, dropItemIds));
+	}
+
+	private DropFilterOption selectedDropFilter(List<DropFilterOption> filters)
+	{
+		for (DropFilterOption filter : filters)
+		{
+			if (filter.label.equals(activeDropFilter))
+			{
+				return filter;
+			}
+		}
+
+		activeDropFilter = filters.get(0).label;
+		return filters.get(0);
+	}
+
+	private JPanel dropFilterButtons(List<DropFilterOption> filters, DropFilterOption selected)
+	{
+		JPanel panel = new JPanel(new GridBagLayout());
+		panel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		panel.setBorder(new EmptyBorder(7, 6, 8, 6));
+
+		GridBagConstraints constraints = new GridBagConstraints();
+		constraints.fill = GridBagConstraints.HORIZONTAL;
+		constraints.weightx = 1.0;
+		constraints.insets = new Insets(2, 2, 2, 2);
+		for (int i = 0; i < filters.size(); i++)
+		{
+			DropFilterOption filter = filters.get(i);
+			constraints.gridx = i % 2;
+			constraints.gridy = i / 2;
+			panel.add(dropFilterButton(filter, selected), constraints);
+		}
+
+		int rows = Math.max(1, (int) Math.ceil(filters.size() / 2.0d));
+		int height = 16 + rows * 25;
+		panel.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, height));
+		panel.setMaximumSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, height));
+		return panel;
+	}
+
+	private JButton dropFilterButton(DropFilterOption filter, DropFilterOption selected)
+	{
+		boolean active = filter.label.equals(selected.label);
+		JButton button = new JButton(filter.label);
+		button.setHorizontalAlignment(SwingConstants.CENTER);
+		button.setFocusPainted(false);
+		button.setBackground(active ? ColorScheme.MEDIUM_GRAY_COLOR : ColorScheme.DARK_GRAY_COLOR);
+		button.setForeground(active ? ColorScheme.BRAND_ORANGE : ColorScheme.LIGHT_GRAY_COLOR);
+		button.setFont(FontManager.getRunescapeSmallFont());
+		button.setBorder(new EmptyBorder(4, 6, 4, 6));
+		button.setToolTipText(filter.drops);
+		button.addActionListener(event ->
+		{
+			activeDropFilter = filter.label;
+			if (lastNpcRenderer != null)
+			{
+				lastNpcRenderer.run();
+			}
+		});
+		return button;
+	}
+
+	private static List<DropFilterOption> dropFilterOptions(NpcCombatInfo info)
+	{
+		List<DropFilterOption> filters = new ArrayList<>();
+		addDropFilter(filters, "Valuable", info.getValuableDrops());
+		addDropFilter(filters, "Rare", info.getRareDrops());
+		addDropFilter(filters, "Slayer-only", info.getSlayerOnlyDrops());
+		addDropFilter(filters, "Clue", info.getClueDrops());
+		addDropFilter(filters, "Ironman", info.getIronmanDrops());
+		addDropFilter(filters, "Alchable", info.getAlchableDrops());
+		addDropFilter(filters, "Upgrade", info.getUpgradeDrops());
+		return filters;
+	}
+
+	private static void addDropFilter(List<DropFilterOption> filters, String label, String drops)
+	{
+		if (drops != null && !drops.isEmpty())
+		{
+			filters.add(new DropFilterOption(label, drops));
+		}
+	}
+
+	private JPanel dropItemsPanel(DropFilterOption filter, Map<String, Integer> dropItemIds)
+	{
+		List<String> drops = splitTags(filter.drops);
+		JPanel panel = new JPanel(new GridBagLayout());
+		panel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		panel.setBorder(new EmptyBorder(6, 4, 8, 4));
+
+		GridBagConstraints constraints = new GridBagConstraints();
+		constraints.gridx = 0;
+		constraints.weightx = 1;
+		constraints.fill = GridBagConstraints.HORIZONTAL;
+		for (int i = 0; i < drops.size(); i++)
+		{
+			constraints.gridy = i;
+			panel.add(dropItemRow(drops.get(i), dropItemIds), constraints);
+		}
+
+		int height = 14 + Math.max(1, drops.size()) * 36;
+		panel.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, height));
+		panel.setMaximumSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, height));
+		return panel;
+	}
+
+	private JPanel dropItemRow(String itemName, Map<String, Integer> dropItemIds)
+	{
+		JPanel row = new JPanel(new GridBagLayout());
+		row.setOpaque(false);
+		row.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 32, 36));
+
+		GridBagConstraints iconConstraints = new GridBagConstraints();
+		iconConstraints.gridx = 0;
+		iconConstraints.insets = new Insets(2, 2, 2, 8);
+		iconConstraints.anchor = GridBagConstraints.CENTER;
+
+		JLabel icon = new JLabel("", SwingConstants.CENTER);
+		icon.setPreferredSize(new Dimension(32, 32));
+		icon.setToolTipText(itemName);
+		Integer itemId = dropItemIds == null ? null : dropItemIds.get(normalizeDropName(itemName));
+		if (itemId != null && itemId > 0 && itemManager != null)
+		{
+			itemManager.getImage(itemId).addTo(icon);
+		}
+		row.add(icon, iconConstraints);
+
+		GridBagConstraints nameConstraints = new GridBagConstraints();
+		nameConstraints.gridx = 1;
+		nameConstraints.insets = new Insets(2, 0, 2, 2);
+		nameConstraints.anchor = GridBagConstraints.WEST;
+		nameConstraints.weightx = 1;
+		nameConstraints.fill = GridBagConstraints.HORIZONTAL;
+
+		JLabel name = new JLabel("<html><body style='width:142px'>" + escape(valueOrDash(itemName)) + "</body></html>");
+		name.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		name.setFont(FontManager.getRunescapeSmallFont());
+		name.setToolTipText(itemName);
+		row.add(name, nameConstraints);
+
+		if (itemId != null && itemId > 0)
+		{
+			JPopupMenu inspectMenu = itemInspectMenu(itemId, itemName);
+			row.setComponentPopupMenu(inspectMenu);
+			icon.setComponentPopupMenu(inspectMenu);
+			name.setComponentPopupMenu(inspectMenu);
+		}
+		return row;
+	}
+
+	private void addRequiredItems(List<NpcItemRequirementStatus> itemRequirementStatuses)
+	{
+		if (itemRequirementStatuses == null || itemRequirementStatuses.isEmpty())
+		{
+			return;
+		}
+
+		addFullWidth(section("Required items"));
+		addFullWidth(requiredItemsPanel(itemRequirementStatuses));
+	}
+
+	private JPanel requiredItemsPanel(List<NpcItemRequirementStatus> itemRequirementStatuses)
+	{
+		JPanel panel = new JPanel(new GridBagLayout());
+		panel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		panel.setBorder(new EmptyBorder(6, 4, 8, 4));
+
+		GridBagConstraints constraints = new GridBagConstraints();
+		constraints.gridx = 0;
+		constraints.weightx = 1;
+		constraints.fill = GridBagConstraints.HORIZONTAL;
+
+		int rowIndex = 0;
+		int preferredHeight = 14;
+		for (int groupIndex = 0; groupIndex < itemRequirementStatuses.size(); groupIndex++)
+		{
+			NpcItemRequirementStatus status = itemRequirementStatuses.get(groupIndex);
+			if (groupIndex > 0)
+			{
+				JPanel andRow = conditionHeader("AND");
+				preferredHeight += addRequiredItemPanelRow(panel, andRow, constraints, rowIndex++);
+			}
+
+			List<NpcItemRequirementAlternativeStatus> alternatives = status.getAlternatives();
+			if (alternatives.size() > 1)
+			{
+				JPanel header = conditionHeader(status.isMet() ? "Any one of these" : "Need one of these");
+				preferredHeight += addRequiredItemPanelRow(panel, header, constraints, rowIndex++);
+			}
+
+			for (int alternativeIndex = 0; alternativeIndex < alternatives.size(); alternativeIndex++)
+			{
+				if (alternativeIndex > 0)
+				{
+					JPanel orRow = conditionHeader("OR");
+					preferredHeight += addRequiredItemPanelRow(panel, orRow, constraints, rowIndex++);
+				}
+
+				JPanel itemRow = requiredItemRow(alternatives.get(alternativeIndex));
+				preferredHeight += addRequiredItemPanelRow(panel, itemRow, constraints, rowIndex++);
+			}
+		}
+
+		panel.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, preferredHeight));
+		panel.setMaximumSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, preferredHeight));
+		return panel;
+	}
+
+	private static int addRequiredItemPanelRow(JPanel panel, JPanel row, GridBagConstraints constraints, int rowIndex)
+	{
+		constraints.gridy = rowIndex;
+		panel.add(row, constraints);
+		return row.getPreferredSize().height;
+	}
+
+	private static JPanel conditionHeader(String text)
+	{
+		JPanel row = new JPanel(new GridBagLayout());
+		row.setOpaque(false);
+		row.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 32, 18));
+
+		JLabel label = new JLabel(text, SwingConstants.CENTER);
+		label.setForeground(ColorScheme.BRAND_ORANGE);
+		label.setFont(FontManager.getRunescapeSmallFont());
+		row.add(label);
+		return row;
+	}
+
+	private static JPanel requiredItemRow(NpcItemRequirementAlternativeStatus alternative)
+	{
+		JPanel row = new JPanel(new GridBagLayout());
+		row.setOpaque(false);
+		row.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 32, 30));
+
+		boolean met = alternative.isMet();
+		Color statusColor = met ? new Color(80, 190, 100) : new Color(210, 80, 80);
+
+		GridBagConstraints iconConstraints = new GridBagConstraints();
+		iconConstraints.gridx = 0;
+		iconConstraints.insets = new Insets(2, 2, 2, 6);
+		iconConstraints.anchor = GridBagConstraints.CENTER;
+
+		JLabel icon = new JLabel(loadIcon(met ? STATUS_CHECK_ICON : STATUS_CROSS_ICON), SwingConstants.CENTER);
+		icon.setPreferredSize(new Dimension(18, 18));
+		row.add(icon, iconConstraints);
+
+		GridBagConstraints itemConstraints = new GridBagConstraints();
+		itemConstraints.gridx = 1;
+		itemConstraints.insets = new Insets(2, 0, 2, 6);
+		itemConstraints.anchor = GridBagConstraints.WEST;
+		itemConstraints.weightx = 0.7;
+		itemConstraints.fill = GridBagConstraints.HORIZONTAL;
+
+		JLabel item = new JLabel("<html><body style='width:108px'>" + escape(valueOrDash(alternative.getItemName())) + "</body></html>");
+		item.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		item.setFont(FontManager.getRunescapeSmallFont());
+		row.add(item, itemConstraints);
+
+		GridBagConstraints statusConstraints = new GridBagConstraints();
+		statusConstraints.gridx = 2;
+		statusConstraints.insets = new Insets(2, 0, 2, 2);
+		statusConstraints.anchor = GridBagConstraints.EAST;
+		statusConstraints.weightx = 0.3;
+
+		JLabel status = new JLabel("<html><body style='width:66px'>" + escape(alternative.statusText()) + "</body></html>");
+		status.setForeground(statusColor);
+		status.setFont(FontManager.getRunescapeSmallFont());
+		row.add(status, statusConstraints);
+		return row;
 	}
 
 	private void addKillChecklist(NpcCombatInfo info)
@@ -646,52 +1046,38 @@ public class InspectPanel extends PluginPanel
 		addFullWidth(rows(comparisonRows.toArray(new JPanel[0])));
 	}
 
-	private void addManualComparison(ItemInspectInfo info, ItemInspectInfo compareInfo)
+	private void addPinnedItemComparison(ItemInspectInfo info)
 	{
-		if (compareInfo == null || compareInfo.getItemId() == info.getItemId())
+		ItemInspectInfo pinned = pinnedInspects.getItem();
+		if (pinned == null || pinned.getItemId() == info.getItemId())
 		{
 			return;
 		}
 
 		List<JPanel> comparisonRows = new ArrayList<>();
-		comparisonRows.add(row("Compared item", compareInfo.getDisplayName()));
-		addDeltaRow(comparisonRows, "Stab attack", info.getAttackStab(), compareInfo.getAttackStab(), false);
-		addDeltaRow(comparisonRows, "Slash attack", info.getAttackSlash(), compareInfo.getAttackSlash(), false);
-		addDeltaRow(comparisonRows, "Crush attack", info.getAttackCrush(), compareInfo.getAttackCrush(), false);
-		addDeltaRow(comparisonRows, "Magic attack", info.getAttackMagic(), compareInfo.getAttackMagic(), false);
-		addDeltaRow(comparisonRows, "Ranged attack", info.getAttackRanged(), compareInfo.getAttackRanged(), false);
-		addDeltaRow(comparisonRows, "Strength", info.getStrength(), compareInfo.getStrength(), false);
-		addDeltaRow(comparisonRows, "Ranged strength", info.getRangedStrength(), compareInfo.getRangedStrength(), false);
-		addDeltaRow(comparisonRows, "Magic damage", info.getMagicDamage(), compareInfo.getMagicDamage(), false);
-		addDeltaRow(comparisonRows, "Prayer", info.getPrayer(), compareInfo.getPrayer(), false);
-		addDeltaRow(comparisonRows, "Weight", info.getWeight(), compareInfo.getWeight(), true);
+		comparisonRows.add(row("Compare", pinned.getDisplayName()));
+		addDeltaRow(comparisonRows, "Stab attack", info.getAttackStab(), pinned.getAttackStab(), false);
+		addDeltaRow(comparisonRows, "Slash attack", info.getAttackSlash(), pinned.getAttackSlash(), false);
+		addDeltaRow(comparisonRows, "Crush attack", info.getAttackCrush(), pinned.getAttackCrush(), false);
+		addDeltaRow(comparisonRows, "Magic attack", info.getAttackMagic(), pinned.getAttackMagic(), false);
+		addDeltaRow(comparisonRows, "Ranged attack", info.getAttackRanged(), pinned.getAttackRanged(), false);
+		addDeltaRow(comparisonRows, "Stab defence", info.getDefenceStab(), pinned.getDefenceStab(), false);
+		addDeltaRow(comparisonRows, "Slash defence", info.getDefenceSlash(), pinned.getDefenceSlash(), false);
+		addDeltaRow(comparisonRows, "Crush defence", info.getDefenceCrush(), pinned.getDefenceCrush(), false);
+		addDeltaRow(comparisonRows, "Magic defence", info.getDefenceMagic(), pinned.getDefenceMagic(), false);
+		addDeltaRow(comparisonRows, "Ranged defence", info.getDefenceRanged(), pinned.getDefenceRanged(), false);
+		addDeltaRow(comparisonRows, "Strength", info.getStrength(), pinned.getStrength(), false);
+		addDeltaRow(comparisonRows, "Ranged strength", info.getRangedStrength(), pinned.getRangedStrength(), false);
+		addDeltaRow(comparisonRows, "Magic damage", info.getMagicDamage(), pinned.getMagicDamage(), false);
+		addDeltaRow(comparisonRows, "Prayer", info.getPrayer(), pinned.getPrayer(), false);
+		addDeltaRow(comparisonRows, "Weight", info.getWeight(), pinned.getWeight(), true);
 		if (comparisonRows.size() <= 1)
 		{
 			return;
 		}
 
-		addFullWidth(section("Manual compare"));
+		addFullWidth(section("Compared to item"));
 		addFullWidth(rows(comparisonRows.toArray(new JPanel[0])));
-	}
-
-	private void addManualCompareSelector(ItemInspectInfo currentInfo, ItemInspectInfo manualCompareInfo)
-	{
-		if (manualCompareInfo == null)
-		{
-			return;
-		}
-
-		addFullWidth(section("Compare item"));
-		addFullWidth(rows(row("Selected", manualCompareInfo.getDisplayName())));
-		JButton clearButton = panelButton("Clear compare item");
-		clearButton.addActionListener(event ->
-		{
-			if (manualCompareHandler != null)
-			{
-				manualCompareHandler.clearCompareItem(currentInfo);
-			}
-		});
-		addFullWidth(clearButton);
 	}
 
 	private void addPriceSummary(ItemPriceSummary priceSummary)
@@ -818,6 +1204,13 @@ public class InspectPanel extends PluginPanel
 		return tags;
 	}
 
+	private static String normalizeDropName(String itemName)
+	{
+		return itemName == null
+			? ""
+			: itemName.replace('\u00A0', ' ').trim().replaceAll("\\s+", " ").toLowerCase(Locale.ENGLISH);
+	}
+
 	private static List<String> splitNameTags(String value)
 	{
 		List<String> names = new ArrayList<>();
@@ -881,6 +1274,30 @@ public class InspectPanel extends PluginPanel
 		return panel;
 	}
 
+	private static JPanel wikiChips(List<String> tags)
+	{
+		JPanel panel = new JPanel(new GridBagLayout());
+		panel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		panel.setBorder(new EmptyBorder(7, 6, 8, 6));
+
+		GridBagConstraints constraints = new GridBagConstraints();
+		constraints.fill = GridBagConstraints.HORIZONTAL;
+		constraints.weightx = 1.0;
+		constraints.insets = new Insets(2, 2, 2, 2);
+		for (int i = 0; i < tags.size(); i++)
+		{
+			constraints.gridx = i % 2;
+			constraints.gridy = i / 2;
+			panel.add(wikiChip(tags.get(i)), constraints);
+		}
+
+		int rows = Math.max(1, (int) Math.ceil(tags.size() / 2.0d));
+		int height = 16 + rows * 25;
+		panel.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, height));
+		panel.setMaximumSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, height));
+		return panel;
+	}
+
 	private static JLabel chip(String text)
 	{
 		JLabel label = new JLabel(text, SwingConstants.CENTER);
@@ -891,6 +1308,29 @@ public class InspectPanel extends PluginPanel
 		label.setBorder(new EmptyBorder(4, 6, 4, 6));
 		label.setToolTipText(text);
 		return label;
+	}
+
+	private static JButton wikiChip(String text)
+	{
+		String url = wikiUrl(text);
+		JButton button = new JButton(formatNameTag(text));
+		button.setHorizontalAlignment(SwingConstants.CENTER);
+		button.setOpaque(true);
+		button.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		button.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		button.setFont(FontManager.getRunescapeSmallFont());
+		button.setBorder(new EmptyBorder(4, 6, 4, 6));
+		button.setToolTipText(url);
+		button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+		button.setFocusPainted(false);
+		button.addActionListener(event -> LinkBrowser.browse(url));
+		return button;
+	}
+
+	private static String wikiUrl(String pageName)
+	{
+		String page = pageName == null ? "" : pageName.trim().replace(' ', '_');
+		return "https://oldschool.runescape.wiki/w/" + URLEncoder.encode(page, StandardCharsets.UTF_8).replace("+", "_");
 	}
 
 	private void addCacheManagement()
@@ -1038,32 +1478,6 @@ public class InspectPanel extends PluginPanel
 		addFullWidth(rows(rows.toArray(new JPanel[0])));
 	}
 
-	private void addManualCompareButtons(ItemInspectInfo info, ItemInspectInfo manualCompareInfo)
-	{
-		JButton setButton = panelButton("Set compare item");
-		setButton.addActionListener(event ->
-		{
-			if (manualCompareHandler != null)
-			{
-				manualCompareHandler.setCompareItem(info);
-			}
-		});
-		addFullWidth(setButton);
-
-		if (manualCompareInfo != null)
-		{
-			JButton clearButton = panelButton("Clear compare item");
-			clearButton.addActionListener(event ->
-			{
-				if (manualCompareHandler != null)
-				{
-					manualCompareHandler.clearCompareItem(info);
-				}
-			});
-			addFullWidth(clearButton);
-		}
-	}
-
 	private static JPanel playerSummary(int combatLevel, PlayerInspectAnalysis analysis, boolean pvpBlocked)
 	{
 		List<JPanel> rows = new ArrayList<>();
@@ -1093,6 +1507,26 @@ public class InspectPanel extends PluginPanel
 		addFullWidth(playerComparisonTotal(analysis.getComparisons()));
 	}
 
+	private void addPinnedPlayerComparison(String playerName, int combatLevel, List<PlayerEquipmentItem> equipment)
+	{
+		if (pinnedInspects.getPlayerName() == null || equipment == null)
+		{
+			return;
+		}
+
+		List<JPanel> rows = new ArrayList<>();
+		rows.add(row("Compare", pinnedInspects.getPlayerName()));
+		if (combatLevel > 0 && pinnedInspects.getPlayerCombatLevel() > 0)
+		{
+			rows.add(deltaRow("Combat", combatLevel - pinnedInspects.getPlayerCombatLevel(), false));
+		}
+		rows.add(deltaRow("Gear value", totalVisibleValue(equipment) - totalVisibleValue(pinnedInspects.getPlayerEquipment()), false));
+		rows.add(row("Same slots", Integer.toString(matchingEquipmentSlots(equipment, pinnedInspects.getPlayerEquipment()))));
+		rows.add(row("Different", differentEquipmentSlots(equipment, pinnedInspects.getPlayerEquipment())));
+		addFullWidth(section("Compared to player"));
+		addFullWidth(rows(rows.toArray(new JPanel[0])));
+	}
+
 	private static Map<String, PlayerEquipmentComparison> comparisonsBySlot(PlayerInspectAnalysis analysis)
 	{
 		Map<String, PlayerEquipmentComparison> bySlot = new HashMap<>();
@@ -1104,6 +1538,81 @@ public class InspectPanel extends PluginPanel
 		for (PlayerEquipmentComparison comparison : analysis.getComparisons())
 		{
 			bySlot.put(comparison.getSlot(), comparison);
+		}
+		return bySlot;
+	}
+
+	private static int totalVisibleValue(List<PlayerEquipmentItem> equipment)
+	{
+		int total = 0;
+		if (equipment == null)
+		{
+			return total;
+		}
+
+		for (PlayerEquipmentItem item : equipment)
+		{
+			if (item != null)
+			{
+				total += Math.max(0, item.getPrice());
+			}
+		}
+		return total;
+	}
+
+	private static int matchingEquipmentSlots(List<PlayerEquipmentItem> current, List<PlayerEquipmentItem> pinned)
+	{
+		Map<String, PlayerEquipmentItem> currentBySlot = equipmentBySlot(current);
+		Map<String, PlayerEquipmentItem> pinnedBySlot = equipmentBySlot(pinned);
+		int matching = 0;
+		for (Map.Entry<String, PlayerEquipmentItem> entry : currentBySlot.entrySet())
+		{
+			PlayerEquipmentItem pinnedItem = pinnedBySlot.get(entry.getKey());
+			if (pinnedItem != null && Objects.equals(entry.getValue().getItemName(), pinnedItem.getItemName()))
+			{
+				matching++;
+			}
+		}
+		return matching;
+	}
+
+	private static String differentEquipmentSlots(List<PlayerEquipmentItem> current, List<PlayerEquipmentItem> pinned)
+	{
+		Map<String, PlayerEquipmentItem> currentBySlot = equipmentBySlot(current);
+		Map<String, PlayerEquipmentItem> pinnedBySlot = equipmentBySlot(pinned);
+		Set<String> slots = new TreeSet<>();
+		slots.addAll(currentBySlot.keySet());
+		slots.addAll(pinnedBySlot.keySet());
+
+		List<String> different = new ArrayList<>();
+		for (String slot : slots)
+		{
+			PlayerEquipmentItem currentItem = currentBySlot.get(slot);
+			PlayerEquipmentItem pinnedItem = pinnedBySlot.get(slot);
+			String currentName = currentItem == null ? null : currentItem.getItemName();
+			String pinnedName = pinnedItem == null ? null : pinnedItem.getItemName();
+			if (!Objects.equals(currentName, pinnedName))
+			{
+				different.add(slot);
+			}
+		}
+		return different.isEmpty() ? "None" : String.join(", ", different);
+	}
+
+	private static Map<String, PlayerEquipmentItem> equipmentBySlot(List<PlayerEquipmentItem> equipment)
+	{
+		Map<String, PlayerEquipmentItem> bySlot = new HashMap<>();
+		if (equipment == null)
+		{
+			return bySlot;
+		}
+
+		for (PlayerEquipmentItem item : equipment)
+		{
+			if (item != null && item.getSlot() != null)
+			{
+				bySlot.put(item.getSlot(), item);
+			}
 		}
 		return bySlot;
 	}
@@ -1251,6 +1760,136 @@ public class InspectPanel extends PluginPanel
 		return button;
 	}
 
+	private void addPinnedTray()
+	{
+		if (pinnedInspects == null || !pinnedInspects.hasAny())
+		{
+			return;
+		}
+
+		addFullWidth(section("Compare"));
+		addFullWidth(pinnedTray());
+	}
+
+	private JPanel pinnedTray()
+	{
+		JPanel panel = new JPanel(new GridBagLayout());
+		panel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		panel.setBorder(new EmptyBorder(6, 4, 8, 4));
+
+		GridBagConstraints constraints = new GridBagConstraints();
+		constraints.gridx = 0;
+		constraints.fill = GridBagConstraints.HORIZONTAL;
+		constraints.weightx = 1.0;
+		constraints.insets = new Insets(0, 0, 3, 0);
+
+		int row = 0;
+		if (pinnedInspects.getNpc() != null)
+		{
+			constraints.gridy = row++;
+			panel.add(pinnedRow("NPC", pinnedInspects.getNpc().getDisplayName(), () ->
+			{
+				if (pinnedInspectHandler != null)
+				{
+					pinnedInspectHandler.openNpc(pinnedInspects.getNpc());
+				}
+			}, () ->
+			{
+				if (pinnedInspectHandler != null)
+				{
+					pinnedInspectHandler.clearNpc();
+				}
+			}), constraints);
+		}
+		if (pinnedInspects.getItem() != null)
+		{
+			constraints.gridy = row++;
+			panel.add(pinnedRow("Item", pinnedInspects.getItem().getDisplayName(), () ->
+			{
+				if (pinnedInspectHandler != null)
+				{
+					pinnedInspectHandler.openItem(pinnedInspects.getItem());
+				}
+			}, () ->
+			{
+				if (pinnedInspectHandler != null)
+				{
+					pinnedInspectHandler.clearItem();
+				}
+			}), constraints);
+		}
+		if (pinnedInspects.getPlayerName() != null)
+		{
+			constraints.gridy = row++;
+			panel.add(pinnedRow("Player", pinnedInspects.getPlayerName(), () ->
+			{
+				if (pinnedInspectHandler != null)
+				{
+					pinnedInspectHandler.openPlayer(
+						pinnedInspects.getPlayerName(),
+						pinnedInspects.getPlayerCombatLevel(),
+						pinnedInspects.getPlayerEquipment());
+				}
+			}, () ->
+			{
+				if (pinnedInspectHandler != null)
+				{
+					pinnedInspectHandler.clearPlayer();
+				}
+			}), constraints);
+		}
+
+		int height = 12 + row * 25;
+		panel.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, height));
+		panel.setMaximumSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, height));
+		return panel;
+	}
+
+	private static JPanel pinnedRow(String type, String label, Runnable open, Runnable clear)
+	{
+		JPanel row = new JPanel(new GridBagLayout());
+		row.setOpaque(false);
+		row.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 32, 22));
+
+		JButton text = comparisonButton(type + ": " + valueOrDash(label), open);
+		text.setToolTipText("Open " + type.toLowerCase(Locale.ENGLISH) + " comparison");
+
+		GridBagConstraints textConstraints = new GridBagConstraints();
+		textConstraints.gridx = 0;
+		textConstraints.fill = GridBagConstraints.HORIZONTAL;
+		textConstraints.weightx = 1.0;
+		textConstraints.insets = new Insets(0, 2, 0, 4);
+		row.add(text, textConstraints);
+
+		JButton clearButton = new JButton("X");
+		clearButton.setFocusPainted(false);
+		clearButton.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		clearButton.setForeground(new Color(210, 80, 80));
+		clearButton.setFont(FontManager.getRunescapeSmallFont());
+		clearButton.setBorder(new EmptyBorder(2, 6, 2, 6));
+		clearButton.setToolTipText("Clear " + type.toLowerCase(Locale.ENGLISH) + " comparison");
+		clearButton.addActionListener(event -> clear.run());
+
+		GridBagConstraints clearConstraints = new GridBagConstraints();
+		clearConstraints.gridx = 1;
+		clearConstraints.insets = new Insets(0, 0, 0, 2);
+		row.add(clearButton, clearConstraints);
+		return row;
+	}
+
+	private static JButton comparisonButton(String text, Runnable action)
+	{
+		JButton button = new JButton(text);
+		button.setHorizontalAlignment(SwingConstants.LEFT);
+		button.setFocusPainted(false);
+		button.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		button.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		button.setFont(FontManager.getRunescapeSmallFont());
+		button.setBorder(new EmptyBorder(3, 6, 3, 6));
+		button.addActionListener(event -> action.run());
+		return button;
+	}
+
 	private static JPanel playerComparisonTotal(List<PlayerEquipmentComparison> comparisons)
 	{
 		JPanel panel = new JPanel(new GridBagLayout());
@@ -1326,6 +1965,7 @@ public class InspectPanel extends PluginPanel
 		removeAll();
 		addSearchControls();
 		addTabControls();
+		addPinnedTray();
 	}
 
 	private void addFullWidth(Component component)
@@ -1695,13 +2335,18 @@ public class InspectPanel extends PluginPanel
 
 	private JPopupMenu itemInspectMenu(PlayerEquipmentItem item)
 	{
+		return itemInspectMenu(item.getItemId(), item.getItemName());
+	}
+
+	private JPopupMenu itemInspectMenu(int itemId, String itemName)
+	{
 		JPopupMenu popupMenu = new JPopupMenu();
 		JMenuItem inspect = new JMenuItem("Inspect item");
 		inspect.addActionListener(event ->
 		{
 			if (itemInspectHandler != null)
 			{
-				itemInspectHandler.inspectItem(item.getItemId(), item.getItemName());
+				itemInspectHandler.inspectItem(itemId, itemName);
 			}
 		});
 		popupMenu.add(inspect);
@@ -1782,7 +2427,7 @@ public class InspectPanel extends PluginPanel
 			icon.setToolTipText(cell.label);
 			icon.setPreferredSize(new Dimension(28, 24));
 			icon.setForeground(ColorScheme.BRAND_ORANGE);
-			if (cell.itemId > 0)
+			if (cell.itemId > 0 && itemManager != null)
 			{
 				itemManager.getImage(cell.itemId).addTo(icon);
 			}
@@ -1790,9 +2435,13 @@ public class InspectPanel extends PluginPanel
 			{
 				icon.setIcon(loadIcon(cell.iconPath));
 			}
-			else
+			else if (spriteManager != null)
 			{
 				spriteManager.addSpriteTo(icon, cell.spriteId, 0);
+			}
+			else
+			{
+				icon.setText("?");
 			}
 
 			JLabel value = new JLabel(valueOrDash(cell.value), SwingConstants.CENTER);
@@ -1959,6 +2608,18 @@ public class InspectPanel extends PluginPanel
 		}
 	}
 
+	private static final class DropFilterOption
+	{
+		private final String label;
+		private final String drops;
+
+		private DropFilterOption(String label, String drops)
+		{
+			this.label = label;
+			this.drops = drops;
+		}
+	}
+
 	private static final class BlockedEquipmentPanel extends JPanel
 	{
 		@Override
@@ -2053,11 +2714,25 @@ public class InspectPanel extends PluginPanel
 		void inspectItem(int itemId, String itemName);
 	}
 
-	public interface ManualCompareHandler
+	public interface PinnedInspectHandler
 	{
-		void setCompareItem(ItemInspectInfo info);
+		void pinNpc(NpcCombatInfo info);
 
-		void clearCompareItem(ItemInspectInfo currentInfo);
+		void pinItem(ItemInspectInfo info);
+
+		void pinPlayer(String playerName, int combatLevel, List<PlayerEquipmentItem> equipment);
+
+		void openNpc(NpcCombatInfo info);
+
+		void openItem(ItemInspectInfo info);
+
+		void openPlayer(String playerName, int combatLevel, List<PlayerEquipmentItem> equipment);
+
+		void clearNpc();
+
+		void clearItem();
+
+		void clearPlayer();
 	}
 
 	public interface CacheManagementHandler

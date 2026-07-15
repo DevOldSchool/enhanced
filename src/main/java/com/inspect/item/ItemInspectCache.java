@@ -76,6 +76,28 @@ class ItemInspectCache
 		return CompletableFuture.supplyAsync(() -> readFromDisk(itemId, nowEpochSecond, ttlDays), executor);
 	}
 
+	CompletableFuture<Optional<ItemInspectInfo>> getBySearchTerm(String searchTerm, long nowEpochSecond, int ttlDays)
+	{
+		String normalizedSearchTerm = normalizeSearchTerm(searchTerm);
+		if (normalizedSearchTerm.isEmpty())
+		{
+			return CompletableFuture.completedFuture(Optional.empty());
+		}
+
+		synchronized (this)
+		{
+			for (ItemInspectInfo cached : memoryCache.values())
+			{
+				if (!cached.isExpired(nowEpochSecond, ttlDays) && matchesSearchTerm(cached, normalizedSearchTerm))
+				{
+					return CompletableFuture.completedFuture(Optional.of(cached));
+				}
+			}
+		}
+
+		return CompletableFuture.supplyAsync(() -> readBySearchTerm(normalizedSearchTerm, nowEpochSecond, ttlDays), executor);
+	}
+
 	CompletableFuture<Void> put(ItemInspectInfo info)
 	{
 		synchronized (this)
@@ -133,40 +155,75 @@ class ItemInspectCache
 				return Optional.empty();
 			}
 
-			Path cacheFile = cachePath(cacheKey);
-			if (!Files.isRegularFile(cacheFile))
-			{
-				return Optional.empty();
-			}
-
-			try (Reader reader = Files.newBufferedReader(cacheFile, StandardCharsets.UTF_8))
-			{
-				ItemInspectInfo info = gson.fromJson(reader, ItemInspectInfo.class);
-				if (info == null || info.getItemId() != itemId || info.isExpired(nowEpochSecond, ttlDays))
-				{
-					Files.deleteIfExists(cacheFile);
-					removeIndex(itemId);
-					return Optional.empty();
-				}
-
-				synchronized (this)
-				{
-					memoryCache.put(itemId, info);
-					cacheKeysByItem.put(itemId, cacheKey);
-				}
-				return Optional.of(info);
-			}
-			catch (RuntimeException | IOException ex)
-			{
-				log.debug("Ignoring corrupt Item Inspect cache file {}", cacheFile, ex);
-				Files.deleteIfExists(cacheFile);
-				removeIndex(itemId);
-				return Optional.empty();
-			}
+			return readCachedInfo(itemId, cacheKey, nowEpochSecond, ttlDays);
 		}
 		catch (IOException ex)
 		{
 			log.debug("Unable to read Item Inspect cache", ex);
+			return Optional.empty();
+		}
+	}
+
+	private Optional<ItemInspectInfo> readBySearchTerm(String normalizedSearchTerm, long nowEpochSecond, int ttlDays)
+	{
+		try
+		{
+			Files.createDirectories(cacheDirectory);
+			loadIndexIfNeeded();
+
+			Map<Integer, String> cacheKeys;
+			synchronized (this)
+			{
+				cacheKeys = new HashMap<>(cacheKeysByItem);
+			}
+
+			for (Map.Entry<Integer, String> entry : cacheKeys.entrySet())
+			{
+				Optional<ItemInspectInfo> cached = readCachedInfo(entry.getKey(), entry.getValue(), nowEpochSecond, ttlDays);
+				if (cached.isPresent() && matchesSearchTerm(cached.get(), normalizedSearchTerm))
+				{
+					return cached;
+				}
+			}
+		}
+		catch (IOException ex)
+		{
+			log.debug("Unable to read Item Inspect cache by search term", ex);
+		}
+		return Optional.empty();
+	}
+
+	private Optional<ItemInspectInfo> readCachedInfo(int itemId, String cacheKey, long nowEpochSecond, int ttlDays)
+		throws IOException
+	{
+		Path cacheFile = cachePath(cacheKey);
+		if (!Files.isRegularFile(cacheFile))
+		{
+			return Optional.empty();
+		}
+
+		try (Reader reader = Files.newBufferedReader(cacheFile, StandardCharsets.UTF_8))
+		{
+			ItemInspectInfo info = gson.fromJson(reader, ItemInspectInfo.class);
+			if (info == null || info.getItemId() != itemId || info.isExpired(nowEpochSecond, ttlDays))
+			{
+				Files.deleteIfExists(cacheFile);
+				removeIndex(itemId);
+				return Optional.empty();
+			}
+
+			synchronized (this)
+			{
+				memoryCache.put(itemId, info);
+				cacheKeysByItem.put(itemId, cacheKey);
+			}
+			return Optional.of(info);
+		}
+		catch (RuntimeException | IOException ex)
+		{
+			log.debug("Ignoring corrupt Item Inspect cache file {}", cacheFile, ex);
+			Files.deleteIfExists(cacheFile);
+			removeIndex(itemId);
 			return Optional.empty();
 		}
 	}
@@ -279,5 +336,22 @@ class ItemInspectCache
 	private static boolean isValidCacheKey(String cacheKey)
 	{
 		return cacheKey != null && !cacheKey.isEmpty() && cacheKey.matches("[A-Za-z0-9._-]+");
+	}
+
+	private static boolean matchesSearchTerm(ItemInspectInfo info, String normalizedSearchTerm)
+	{
+		return normalizedSearchTerm.equals(normalizeSearchTerm(info.getDisplayName()))
+			|| normalizedSearchTerm.equals(normalizeSearchTerm(info.getWikiPage()));
+	}
+
+	private static String normalizeSearchTerm(String value)
+	{
+		return value == null
+			? ""
+			: value.replace('_', ' ')
+				.replace('\u00A0', ' ')
+				.trim()
+				.replaceAll("\\s+", " ")
+				.toLowerCase(java.util.Locale.ENGLISH);
 	}
 }

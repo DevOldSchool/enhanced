@@ -98,6 +98,58 @@ public class ItemInspectServiceTest
 	}
 
 	@Test
+	public void searchUsesCachedItemInfoForRepeatedQuery() throws Exception
+	{
+		QueuedResponseInterceptor responses = new QueuedResponseInterceptor();
+		responses.enqueue(200, searchResponse("Abyssal whip"));
+		responses.enqueue(200, parseResponse("{{Infobox Item\n"
+			+ "|name = Abyssal whip\n"
+			+ "|id = 4151\n"
+			+ "}}\n"
+			+ "{{Infobox Bonuses\n"
+			+ "|slot = weapon\n"
+			+ "|aslash = +82\n"
+			+ "}}"));
+		ItemInspectService itemService = service(responses);
+
+		ItemInspectInfo first = itemService.search("Abyssal whip", 7).get(5, TimeUnit.SECONDS);
+		ItemInspectInfo second = itemService.search("Abyssal whip", 7).get(5, TimeUnit.SECONDS);
+
+		assertEquals("Abyssal whip", first.getDisplayName());
+		assertEquals(first, second);
+		assertEquals(2, responses.requestCount());
+		assertEquals("query", responses.requests().get(0).url().queryParameter("action"));
+		assertEquals("parse", responses.requests().get(1).url().queryParameter("action"));
+	}
+
+	@Test
+	public void searchUsesPersistedCachedItemInfoByName() throws Exception
+	{
+		Path cacheDirectory = temporaryFolder.newFolder().toPath();
+		QueuedResponseInterceptor firstResponses = new QueuedResponseInterceptor();
+		firstResponses.enqueue(200, searchResponse("Abyssal whip"));
+		firstResponses.enqueue(200, parseResponse("{{Infobox Item\n"
+			+ "|name = Abyssal whip\n"
+			+ "|id = 4151\n"
+			+ "}}\n"
+			+ "{{Infobox Bonuses\n"
+			+ "|slot = weapon\n"
+			+ "|aslash = +82\n"
+			+ "}}"));
+		ItemInspectService firstService = service(firstResponses, cacheDirectory);
+		ItemInspectInfo first = firstService.search("Abyssal whip", 7).get(5, TimeUnit.SECONDS);
+		firstService.shutDown();
+		service = null;
+
+		QueuedResponseInterceptor secondResponses = new QueuedResponseInterceptor();
+		ItemInspectService secondService = service(secondResponses, cacheDirectory);
+		ItemInspectInfo second = secondService.search("Abyssal_whip", 7).get(5, TimeUnit.SECONDS);
+
+		assertEquals(first, second);
+		assertEquals(0, secondResponses.requestCount());
+	}
+
+	@Test
 	public void equipmentStatsUseBucketBatchLookup() throws Exception
 	{
 		QueuedResponseInterceptor responses = new QueuedResponseInterceptor();
@@ -147,13 +199,22 @@ public class ItemInspectServiceTest
 
 	private ItemInspectService service(QueuedResponseInterceptor responses) throws IOException
 	{
-		Path cacheDirectory = temporaryFolder.newFolder().toPath();
+		return service(responses, temporaryFolder.newFolder().toPath());
+	}
+
+	private ItemInspectService service(QueuedResponseInterceptor responses, Path cacheDirectory)
+	{
 		service = new ItemInspectService(
 			new OkHttpClient.Builder().addInterceptor(responses).build(),
 			new Gson(),
 			WIKI_BASE,
 			cacheDirectory);
 		return service;
+	}
+
+	private static String searchResponse(String title)
+	{
+		return "{\"query\":{\"search\":[{\"title\":\"" + title + "\"}]}}";
 	}
 
 	private static String parseResponse(String wikitext)

@@ -2,10 +2,13 @@ package com.inspect.npc;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -14,6 +17,7 @@ class NpcInspectParser
 	private static final Pattern WIKI_LINK = Pattern.compile("\\[\\[([^]|]+\\|)?([^]]+)]]");
 	private static final Pattern HTML_TAG = Pattern.compile("<[^>]+>");
 	private static final Pattern TEMPLATE = Pattern.compile("\\{\\{([^{}|]+\\|)?([^{}|]+)}}");
+	private static final Pattern ITEM_TEMPLATE_LINK = Pattern.compile("\\{\\{(?:plink|ilink|item)\\|([^}|]+)", Pattern.CASE_INSENSITIVE);
 	private static final Pattern DROP_LINE = Pattern.compile("\\|name\\s*=\\s*([^\\n|}]+)", Pattern.CASE_INSENSITIVE);
 	private static final Pattern DROPS_HEADING = Pattern.compile("(?im)^==[ \\t]*Drops[ \\t]*==[ \\t]*$");
 	private static final Pattern LEVEL_TWO_HEADING = Pattern.compile("(?m)^==(?!=)[^\\r\\n]*?(?<![=])==[ \\t]*$");
@@ -85,12 +89,17 @@ class NpcInspectParser
 				value(fields, "superior monster", suffix, null)
 			))
 			.notableDrops(dropSummary(wikitext, "uncommon", "rare", "very rare"))
-			.rareDrops(dropSummary(wikitext, "rare", "very rare"))
+			.rareDrops(classifiedDrops(wikitext, DropCategory.RARE))
+			.valuableDrops(classifiedDrops(wikitext, DropCategory.VALUABLE))
+			.slayerOnlyDrops(classifiedDrops(wikitext, DropCategory.SLAYER_ONLY))
 			.uniqueDrops(classifiedDrops(wikitext, DropCategory.UNIQUE))
 			.alchableDrops(classifiedDrops(wikitext, DropCategory.ALCHABLE))
 			.clueDrops(classifiedDrops(wikitext, DropCategory.CLUE))
+			.ironmanDrops(classifiedDrops(wikitext, DropCategory.IRONMAN))
+			.upgradeDrops(classifiedDrops(wikitext, DropCategory.UPGRADE))
 			.resourceDrops(classifiedDrops(wikitext, DropCategory.RESOURCE))
 			.supplyDrops(classifiedDrops(wikitext, DropCategory.SUPPLY))
+			.itemRequirements(itemRequirements(wikitext))
 			.fetchedAtEpochSecond(Instant.now().getEpochSecond())
 			.sourceUrl(lookup.getSourceUrl())
 			.build();
@@ -383,13 +392,141 @@ class NpcInspectParser
 		return false;
 	}
 
+	private static List<NpcItemRequirement> itemRequirements(String wikitext)
+	{
+		if (wikitext == null || wikitext.isEmpty())
+		{
+			return Collections.emptyList();
+		}
+
+		List<NpcItemRequirement> requirements = new ArrayList<>();
+		Set<String> seenLabels = new LinkedHashSet<>();
+		for (String sentence : wikitext.split("(?<=[.!?])\\s+|\\r?\\n+"))
+		{
+			String normalizedSentence = normalizeValue(sentence);
+			if (!isItemRequirementSentence(normalizedSentence))
+			{
+				continue;
+			}
+
+			List<String> alternatives = itemRequirementAlternatives(sentence);
+			if (alternatives.isEmpty())
+			{
+				continue;
+			}
+
+			String label = String.join(" or ", alternatives);
+			String normalizedLabel = label.toLowerCase(Locale.ENGLISH);
+			if (seenLabels.add(normalizedLabel))
+			{
+				requirements.add(new NpcItemRequirement(label, alternatives));
+			}
+		}
+		return requirements.isEmpty() ? Collections.emptyList() : requirements;
+	}
+
+	private static boolean isItemRequirementSentence(String sentence)
+	{
+		String lower = sentence.toLowerCase(Locale.ENGLISH);
+		return containsAny(lower, "require", "must", "need", "bring", "without")
+			&& containsAny(lower, "kill", "finish", "defeat", "slay");
+	}
+
+	private static List<String> itemRequirementAlternatives(String sentence)
+	{
+		List<String> alternatives = new ArrayList<>();
+		addItemRequirementLinks(alternatives, sentence);
+		addItemRequirementTemplates(alternatives, sentence);
+		addKnownItemRequirementAlternatives(alternatives, sentence);
+		return alternatives;
+	}
+
+	private static void addKnownItemRequirementAlternatives(List<String> alternatives, String sentence)
+	{
+		String lower = sentence.toLowerCase(Locale.ENGLISH);
+		if (lower.contains("gargoyle") && containsAnyItem(alternatives, "rock hammer", "rock thrownhammer", "granite hammer"))
+		{
+			addItemRequirementAlternative(alternatives, "Granite maul");
+		}
+	}
+
+	private static boolean containsAnyItem(List<String> items, String... names)
+	{
+		for (String item : items)
+		{
+			for (String name : names)
+			{
+				if (item.equalsIgnoreCase(name))
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	private static void addItemRequirementLinks(List<String> alternatives, String sentence)
+	{
+		Matcher matcher = WIKI_LINK.matcher(sentence);
+		while (matcher.find())
+		{
+			addItemRequirementAlternative(alternatives, matcher.group(2));
+		}
+	}
+
+	private static void addItemRequirementTemplates(List<String> alternatives, String sentence)
+	{
+		Matcher matcher = ITEM_TEMPLATE_LINK.matcher(sentence);
+		while (matcher.find())
+		{
+			addItemRequirementAlternative(alternatives, matcher.group(1));
+		}
+	}
+
+	private static void addItemRequirementAlternative(List<String> alternatives, String value)
+	{
+		String name = normalizeValue(value).replace('_', ' ').trim();
+		if (!isLikelyItemRequirement(name))
+		{
+			return;
+		}
+
+		for (String existing : alternatives)
+		{
+			if (existing.equalsIgnoreCase(name))
+			{
+				return;
+			}
+		}
+		alternatives.add(name);
+	}
+
+	private static boolean isLikelyItemRequirement(String name)
+	{
+		if (name == null || name.isEmpty() || name.length() > 48)
+		{
+			return false;
+		}
+
+		String lower = name.toLowerCase(Locale.ENGLISH);
+		return !containsAny(lower, "slayer", "hitpoints", "attack", "strength", "defence", "ranged", "magic", "prayer", "combat", "smasher");
+	}
+
 	private static String classifiedDrops(String wikitext, DropCategory category)
 	{
-		List<String> drops = dropNames(wikitext);
-		List<String> matching = new ArrayList<>();
-		for (String drop : drops)
+		String drops = dropSection(wikitext);
+		if (drops == null)
 		{
-			if (category.matches(drop) && !matching.contains(drop))
+			return null;
+		}
+
+		List<String> matching = new ArrayList<>();
+		Matcher matcher = DROP_LINE.matcher(drops);
+		while (matcher.find())
+		{
+			String drop = normalizeValue(matcher.group(1));
+			String context = dropContext(drops, matcher.start(), matcher.end());
+			if (!drop.isEmpty() && category.matches(drop, context) && !matching.contains(drop))
 			{
 				matching.add(drop);
 				if (matching.size() >= 6)
@@ -399,6 +536,21 @@ class NpcInspectParser
 			}
 		}
 		return matching.isEmpty() ? null : String.join(", ", matching);
+	}
+
+	private static String dropContext(String drops, int matchStart, int matchEnd)
+	{
+		int lineStart = Math.max(0, drops.lastIndexOf('\n', matchStart));
+		int lineEnd = drops.indexOf('\n', matchEnd);
+		String line = drops.substring(lineStart, lineEnd < 0 ? drops.length() : lineEnd);
+
+		String heading = "";
+		Matcher headingMatcher = Pattern.compile("(?m)^===[^\\r\\n]*===[ \\t]*$").matcher(drops);
+		while (headingMatcher.find() && headingMatcher.start() < matchStart)
+		{
+			heading = headingMatcher.group();
+		}
+		return (heading + " " + line).toLowerCase(Locale.ENGLISH);
 	}
 
 	private static List<String> dropNames(String wikitext)
@@ -438,12 +590,36 @@ class NpcInspectParser
 
 	private enum DropCategory
 	{
+		VALUABLE
+			{
+				@Override
+				boolean matches(String drop, String context)
+				{
+					return RARE.matches(drop, context) || UNIQUE.matches(drop, context) || ALCHABLE.matches(drop, context);
+				}
+			},
+		RARE
+			{
+				@Override
+				boolean matches(String drop, String context)
+				{
+					return containsAny(context, "rare", "very rare") || numericRarityDenominator(context) >= 128;
+				}
+			},
+		SLAYER_ONLY
+			{
+				@Override
+				boolean matches(String drop, String context)
+				{
+					return containsAny(context, "slayer", "task only", "on task", "task-only");
+				}
+			},
 		UNIQUE
 			{
 				@Override
-				boolean matches(String drop)
+				boolean matches(String drop, String context)
 				{
-					String lower = drop.toLowerCase();
+					String lower = drop.toLowerCase(Locale.ENGLISH);
 					return lower.contains("clue") || lower.contains("key") || lower.contains("shard") || lower.contains("sigil")
 						|| lower.contains("pet") || lower.contains("visage") || lower.contains("head") || lower.contains("unique");
 				}
@@ -451,9 +627,9 @@ class NpcInspectParser
 		ALCHABLE
 			{
 				@Override
-				boolean matches(String drop)
+				boolean matches(String drop, String context)
 				{
-					String lower = drop.toLowerCase();
+					String lower = drop.toLowerCase(Locale.ENGLISH);
 					return lower.contains("rune ") || lower.contains("dragon ") || lower.contains("adamant ")
 						|| lower.contains("mithril ") || lower.contains("battleaxe") || lower.contains("platebody")
 						|| lower.contains("kiteshield") || lower.contains("longsword");
@@ -462,17 +638,35 @@ class NpcInspectParser
 		CLUE
 			{
 				@Override
-				boolean matches(String drop)
+				boolean matches(String drop, String context)
 				{
-					return drop.toLowerCase().contains("clue");
+					return drop.toLowerCase(Locale.ENGLISH).contains("clue");
+				}
+			},
+		IRONMAN
+			{
+				@Override
+				boolean matches(String drop, String context)
+				{
+					return RESOURCE.matches(drop, context) || SUPPLY.matches(drop, context) || UPGRADE.matches(drop, context);
+				}
+			},
+		UPGRADE
+			{
+				@Override
+				boolean matches(String drop, String context)
+				{
+					String lower = drop.toLowerCase(Locale.ENGLISH);
+					return containsAny(lower, "upgrade", "attachment", "shard", "sigil", "visage", "hilt", "claw",
+						"fang", "jaw", "heart", "gem", "dust", "clamp", "needle", "thread", "totem", "head");
 				}
 			},
 		RESOURCE
 			{
 				@Override
-				boolean matches(String drop)
+				boolean matches(String drop, String context)
 				{
-					String lower = drop.toLowerCase();
+					String lower = drop.toLowerCase(Locale.ENGLISH);
 					return lower.contains("ore") || lower.contains("log") || lower.contains("bar") || lower.contains("herb")
 						|| lower.startsWith("grimy ") || lower.contains(" weed") || lower.contains("seed")
 						|| lower.contains("hide") || lower.contains("scale") || lower.contains("essence");
@@ -481,16 +675,34 @@ class NpcInspectParser
 		SUPPLY
 			{
 				@Override
-				boolean matches(String drop)
+				boolean matches(String drop, String context)
 				{
-					String lower = drop.toLowerCase();
+					String lower = drop.toLowerCase(Locale.ENGLISH);
 					return lower.contains("bone") || lower.contains("rune") || lower.contains("arrow") || lower.contains("bolt")
 						|| lower.contains("food") || lower.contains("shark") || lower.contains("lobster")
 						|| lower.contains("potion") || lower.contains("ammo");
 				}
 			};
 
-		abstract boolean matches(String drop);
+		abstract boolean matches(String drop, String context);
+	}
+
+	private static int numericRarityDenominator(String context)
+	{
+		Matcher matcher = Pattern.compile("1\\s*/\\s*(\\d+)").matcher(context);
+		if (!matcher.find())
+		{
+			return 0;
+		}
+
+		try
+		{
+			return Integer.parseInt(matcher.group(1));
+		}
+		catch (NumberFormatException ex)
+		{
+			return 0;
+		}
 	}
 
 	private static Iterable<String> splitTopLevel(String infobox)
