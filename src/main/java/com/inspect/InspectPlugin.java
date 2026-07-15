@@ -4,6 +4,8 @@ import com.inspect.item.ItemInspectInfo;
 import com.inspect.item.ItemPriceSummary;
 import com.inspect.item.ItemRequirementSummary;
 import com.inspect.item.ItemInspectService;
+import com.inspect.item.ItemSource;
+import com.inspect.item.ItemSourceRequirement;
 import com.inspect.inspect.InspectPanel;
 import com.inspect.inspect.PinnedInspectState;
 import com.inspect.inspect.RecentInspectEntry;
@@ -42,6 +44,7 @@ import javax.swing.SwingUtilities;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.api.EquipmentInventorySlot;
+import net.runelite.api.GameState;
 import net.runelite.api.Item;
 import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
@@ -53,9 +56,11 @@ import net.runelite.api.PlayerComposition;
 import net.runelite.api.Skill;
 import net.runelite.api.WorldType;
 import net.runelite.api.events.ClientTick;
+import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.MenuOpened;
+import net.runelite.api.events.StatChanged;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.ItemID;
@@ -128,6 +133,9 @@ public class InspectPlugin extends Plugin
 	private EquipmentRecommendation currentNpcRecommendation;
 	private String currentNpcRecommendationMessage;
 	private Map<String, Integer> currentNpcDropItemIds = Collections.emptyMap();
+	private ItemInspectInfo currentItemInfo;
+	private ItemInspectInfo currentItemEquippedInfo;
+	private ItemPriceSummary currentItemPriceSummary;
 	private PinnedInspectState pinnedInspectState = PinnedInspectState.empty();
 	private final Set<String> playerInspectTargetsThisTick = new HashSet<>();
 	private final Deque<String> recentNpcInspects = new ArrayDeque<>();
@@ -283,6 +291,7 @@ public class InspectPlugin extends Plugin
 		currentNpcRecommendation = null;
 		currentNpcRecommendationMessage = null;
 		currentNpcDropItemIds = Collections.emptyMap();
+		clearCurrentItemInspect();
 		pinnedInspectState = PinnedInspectState.empty();
 		resetInspectMenuMarker();
 		log.debug("Inspect plugin stopped");
@@ -315,6 +324,7 @@ public class InspectPlugin extends Plugin
 				addRecentItem(recentItemInspects, info.getItemId(), info.getDisplayName());
 				bankEquipmentOverlay.clear();
 				inspectPanel.setRecentItems(recentItems());
+				setCurrentItemInspect(info, null, priceSummary);
 				inspectPanel.showItemInfo(info, null, requirementSummary, priceSummary);
 			});
 		});
@@ -364,6 +374,21 @@ public class InspectPlugin extends Plugin
 	public void onClientTick(ClientTick event)
 	{
 		resetInspectMenuMarker();
+	}
+
+	@Subscribe
+	public void onGameStateChanged(GameStateChanged event)
+	{
+		if (event.getGameState() == GameState.LOGGED_IN)
+		{
+			refreshCurrentItemRequirements();
+		}
+	}
+
+	@Subscribe
+	public void onStatChanged(StatChanged event)
+	{
+		refreshCurrentItemRequirements();
 	}
 
 	@Subscribe
@@ -689,6 +714,7 @@ public class InspectPlugin extends Plugin
 	{
 		Map<EquipmentInventorySlot, EquippedItem> equippedItems = snapshotEquippedItems();
 		addRecentItem(recentItemInspects, itemId, itemName);
+		clearCurrentItemInspect();
 		SwingUtilities.invokeLater(() ->
 		{
 			clientToolbar.openPanel(inspectNavButton);
@@ -888,6 +914,10 @@ public class InspectPlugin extends Plugin
 			resolvedQuery = searchAlias(resolvedQuery);
 		}
 		final String lookupQuery = resolvedQuery;
+		if ("Item".equals(type))
+		{
+			clearCurrentItemInspect();
+		}
 		SwingUtilities.invokeLater(() -> inspectPanel.showSearchLoading(type, lookupQuery));
 		if ("NPC".equals(type))
 		{
@@ -1097,10 +1127,42 @@ public class InspectPlugin extends Plugin
 							result.info.getDisplayName() == null ? itemName : result.info.getDisplayName());
 						bankEquipmentOverlay.clear();
 						inspectPanel.setRecentItems(recentItems());
+						setCurrentItemInspect(result.info, result.equippedInfo, priceSummary);
 						inspectPanel.showItemInfo(result.info, result.equippedInfo, requirementSummary, priceSummary);
 					});
 				});
 			});
+	}
+
+	private void setCurrentItemInspect(ItemInspectInfo info, ItemInspectInfo equippedInfo, ItemPriceSummary priceSummary)
+	{
+		currentItemInfo = info;
+		currentItemEquippedInfo = equippedInfo;
+		currentItemPriceSummary = priceSummary;
+	}
+
+	private void clearCurrentItemInspect()
+	{
+		currentItemInfo = null;
+		currentItemEquippedInfo = null;
+		currentItemPriceSummary = null;
+	}
+
+	private void refreshCurrentItemRequirements()
+	{
+		if (inspectPanel == null || !inspectPanel.isItemActive() || currentItemInfo == null)
+		{
+			return;
+		}
+
+		ItemRequirementSummary requirementSummary = itemRequirementSummary(currentItemInfo, snapshotSkillLevels());
+		SwingUtilities.invokeLater(() ->
+		{
+			if (inspectPanel != null && inspectPanel.isItemActive() && currentItemInfo != null)
+			{
+				inspectPanel.showItemInfo(currentItemInfo, currentItemEquippedInfo, requirementSummary, currentItemPriceSummary);
+			}
+		});
 	}
 
 	private void findRecommendedBankGear(NpcCombatInfo info)
@@ -1815,14 +1877,24 @@ public class InspectPlugin extends Plugin
 
 		List<String> met = new ArrayList<>();
 		List<String> missing = new ArrayList<>();
+		Set<String> itemRequirementKeys = new HashSet<>();
 		addRequirementCheck(met, missing, "Attack", info.getRequirementAttack(), Skill.ATTACK, skillLevels);
+		addItemRequirementKey(itemRequirementKeys, "Attack", info.getRequirementAttack());
 		addRequirementCheck(met, missing, "Strength", info.getRequirementStrength(), Skill.STRENGTH, skillLevels);
+		addItemRequirementKey(itemRequirementKeys, "Strength", info.getRequirementStrength());
 		addRequirementCheck(met, missing, "Defence", info.getRequirementDefence(), Skill.DEFENCE, skillLevels);
+		addItemRequirementKey(itemRequirementKeys, "Defence", info.getRequirementDefence());
 		addRequirementCheck(met, missing, "Ranged", info.getRequirementRanged(), Skill.RANGED, skillLevels);
+		addItemRequirementKey(itemRequirementKeys, "Ranged", info.getRequirementRanged());
 		addRequirementCheck(met, missing, "Magic", info.getRequirementMagic(), Skill.MAGIC, skillLevels);
+		addItemRequirementKey(itemRequirementKeys, "Magic", info.getRequirementMagic());
 		addRequirementCheck(met, missing, "Prayer", info.getRequirementPrayer(), Skill.PRAYER, skillLevels);
+		addItemRequirementKey(itemRequirementKeys, "Prayer", info.getRequirementPrayer());
 		addRequirementCheck(met, missing, "Hitpoints", info.getRequirementHitpoints(), Skill.HITPOINTS, skillLevels);
+		addItemRequirementKey(itemRequirementKeys, "Hitpoints", info.getRequirementHitpoints());
 		addRequirementCheck(met, missing, "Slayer", info.getRequirementSlayer(), Skill.SLAYER, skillLevels);
+		addItemRequirementKey(itemRequirementKeys, "Slayer", info.getRequirementSlayer());
+		addSourceRequirementChecks(met, missing, info.getSourcePlan(), skillLevels, itemRequirementKeys);
 		return new ItemRequirementSummary(met, missing);
 	}
 
@@ -1880,6 +1952,88 @@ public class InspectPlugin extends Plugin
 		}
 
 		missing.add(summary);
+	}
+
+	private static void addItemRequirementKey(Set<String> keys, String label, String requirement)
+	{
+		Double required = requirementLevel(requirement);
+		if (required != null)
+		{
+			keys.add(label + ":" + required.intValue());
+		}
+	}
+
+	private static void addSourceRequirementChecks(List<String> met, List<String> missing, List<ItemSource> sources,
+		Map<Skill, Integer> skillLevels, Set<String> itemRequirementKeys)
+	{
+		if (sources == null || sources.isEmpty())
+		{
+			return;
+		}
+
+		Set<String> seen = new HashSet<>();
+		for (ItemSource source : sources)
+		{
+			if (source.getRequirements() == null)
+			{
+				continue;
+			}
+
+			for (ItemSourceRequirement requirement : source.getRequirements())
+			{
+				Skill skill = skillFromName(requirement.getSkillName());
+				if (skill == null)
+				{
+					continue;
+				}
+
+				if (itemRequirementKeys.contains(requirement.getSkillName() + ":" + requirement.getLevel()))
+				{
+					continue;
+				}
+
+				String key = source.getCategory() + ":" + requirement.getSkillName() + ":" + requirement.getLevel();
+				if (!seen.add(key))
+				{
+					continue;
+				}
+
+				int current = skillLevels.getOrDefault(skill, 1);
+				String summary = requirement.getSkillName() + " " + requirement.getLevel()
+					+ " for " + source.getCategory().toLowerCase(Locale.ENGLISH)
+					+ " (" + current + ")";
+				if (current >= requirement.getLevel())
+				{
+					met.add(summary);
+					continue;
+				}
+
+				missing.add(summary);
+			}
+		}
+	}
+
+	private static Skill skillFromName(String skillName)
+	{
+		if (skillName == null || skillName.isEmpty())
+		{
+			return null;
+		}
+
+		String enumName = skillName.trim().toUpperCase(Locale.ENGLISH);
+		if ("RUNECRAFTING".equals(enumName))
+		{
+			enumName = "RUNECRAFT";
+		}
+
+		try
+		{
+			return Skill.valueOf(enumName);
+		}
+		catch (IllegalArgumentException ex)
+		{
+			return null;
+		}
 	}
 
 	private static Double requirementLevel(String requirement)

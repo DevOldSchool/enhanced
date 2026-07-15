@@ -4,6 +4,7 @@ import java.util.Locale;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 
 public class ItemInspectParserTest
@@ -134,7 +135,72 @@ public class ItemInspectParserTest
 		ItemInspectInfo info = parser.parse(19564, "Royal seed pod", new ItemWikiLookup("Royal_seed_pod", null, "https://wiki"), wikitext);
 
 		assertEquals("Monkey Madness II quest", info.getQuestRequirements());
-		assertEquals("Reward", info.getSourceSummary());
+		assertEquals("Quests", info.getSourceSummary());
+	}
+
+	@Test
+	public void parsesStructuredItemSourcesAndRequirements()
+	{
+		String wikitext = "{{Infobox Item\n"
+			+ "|name = Test bow\n"
+			+ "|id = 42\n"
+			+ "}}\n"
+			+ "The '''test bow''' requires [[Lost City]] quest to wield.\n"
+			+ "It is sold by [[Lowe's Archery Emporium]].\n"
+			+ "It is dropped by [[Abyssal demon]]s.\n"
+			+ "It can be crafted with level 80 [[Fletching]] and a [[magic logs|magic log]].\n"
+			+ "It can also be obtained as a reward from elite [[Treasure Trails]].\n";
+
+		ItemInspectInfo info = parser.parse(42, "Test bow", new ItemWikiLookup("Test_bow", null, "https://wiki"), wikitext);
+
+		assertEquals("Shops, Monsters, Skilling, Quests, Clues", info.getSourceSummary());
+		assertEquals(5, info.getSourcePlan().size());
+		assertEquals("Shops", info.getSourcePlan().get(0).getCategory());
+		assertEquals("Monsters", info.getSourcePlan().get(1).getCategory());
+		assertEquals("Skilling", info.getSourcePlan().get(2).getCategory());
+		assertEquals("Quests", info.getSourcePlan().get(3).getCategory());
+		assertEquals("Clues", info.getSourcePlan().get(4).getCategory());
+		assertEquals("Fletching", info.getSourcePlan().get(2).getRequirements().get(0).getSkillName());
+		assertEquals(80, info.getSourcePlan().get(2).getRequirements().get(0).getLevel());
+		assertFalse(info.getSourcePlan().get(3).getDetails().isEmpty());
+	}
+
+	@Test
+	public void cleansTemplatePipesFromSourceDetails()
+	{
+		String wikitext = "{{Infobox Item\n"
+			+ "|name = Rune platebody\n"
+			+ "|id = 1127\n"
+			+ "}}\n"
+			+ "Players with level 99 [[Smithing]] can make one by using 5 [[runite bar]]s on an anvil while carrying a hammer.\n"
+			+ "It requires 40 [[Defence]] and completion of the quest {{QuestReq|Dragon Slayer I| to equip}}.\n";
+
+		ItemInspectInfo info = parser.parse(1127, "Rune platebody", new ItemWikiLookup("Rune_platebody", null, "https://wiki"), wikitext);
+
+		assertEquals("Players with level 99 Smithing can make one by using 5 runite bars on an anvil while carrying a hammer.",
+			info.getSourcePlan().get(0).getDetails().get(0));
+		assertEquals("It requires 40 Defence and completion of the quest Dragon Slayer I to equip.",
+			info.getSourcePlan().get(1).getDetails().get(0));
+		assertEquals(1, info.getSourcePlan().get(1).getDetails().size());
+	}
+
+	@Test
+	public void parsesRunePlatelegsRequirementsWithoutExperienceAsLevel()
+	{
+		String wikitext = "{{Infobox Item\n"
+			+ "|name = Rune platelegs\n"
+			+ "|id = 1079\n"
+			+ "}}\n"
+			+ "'''Rune platelegs''' are platelegs made of [[runite]]. They require level 40 [[Defence]] to wear.\n"
+			+ "They can be created with the [[Smithing]] [[skill]] by using 3 [[runite bar]]s and a [[hammer]] on an [[anvil]]; "
+			+ "this requires level 99 Smithing and yields 225 Smithing [[experience]].\n";
+
+		ItemInspectInfo info = parser.parse(1079, "Rune platelegs", new ItemWikiLookup("Rune_platelegs", null, "https://wiki"), wikitext);
+
+		assertEquals("40", info.getRequirementDefence());
+		assertEquals("Smithing", info.getSourcePlan().get(0).getRequirements().get(0).getSkillName());
+		assertEquals(99, info.getSourcePlan().get(0).getRequirements().get(0).getLevel());
+		assertEquals(1, info.getSourcePlan().get(0).getRequirements().size());
 	}
 
 	@Test

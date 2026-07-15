@@ -3,6 +3,8 @@ package com.inspect.inspect;
 import com.inspect.item.ItemInspectInfo;
 import com.inspect.item.ItemRequirementSummary;
 import com.inspect.item.ItemPriceSummary;
+import com.inspect.item.ItemSource;
+import com.inspect.item.ItemSourceRequirement;
 import com.inspect.npc.CombatStyleRecommendation;
 import com.inspect.npc.EquipmentRecommendation;
 import com.inspect.npc.NpcCombatInfo;
@@ -40,6 +42,7 @@ import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
+import javax.swing.JTextArea;
 import javax.swing.SwingConstants;
 import javax.swing.border.EmptyBorder;
 
@@ -185,6 +188,11 @@ public class InspectPanel extends PluginPanel
 	public boolean isNpcActive()
 	{
 		return "NPC".equals(activeTab);
+	}
+
+	public boolean isItemActive()
+	{
+		return "Item".equals(activeTab);
 	}
 
 	public void showLoading(String npcName)
@@ -383,7 +391,7 @@ public class InspectPanel extends PluginPanel
 		));
 		addPriceSummary(priceSummary);
 		addItemTags(info);
-		addItemSource(info);
+		addItemSources(info);
 
 		if (hasAny(info.getAttackStab(), info.getAttackSlash(), info.getAttackCrush(), info.getAttackMagic(), info.getAttackRanged()))
 		{
@@ -420,27 +428,7 @@ public class InspectPanel extends PluginPanel
 			}, 4));
 		}
 
-		if (hasAny(info.getRequirementAttack(), info.getRequirementStrength(), info.getRequirementDefence(), info.getRequirementRanged(),
-			info.getRequirementMagic(), info.getRequirementPrayer(), info.getRequirementHitpoints(), info.getRequirementSlayer()))
-		{
-			addFullWidth(section("Requirements"));
-			addFullWidth(rows(nonEmptyRows(
-				"Attack", info.getRequirementAttack(),
-				"Strength", info.getRequirementStrength(),
-				"Defence", info.getRequirementDefence(),
-				"Ranged", info.getRequirementRanged(),
-				"Magic", info.getRequirementMagic(),
-				"Prayer", info.getRequirementPrayer(),
-				"Hitpoints", info.getRequirementHitpoints(),
-				"Slayer", info.getRequirementSlayer()
-			)));
-		}
-		addRequirementSummary(requirementSummary);
-		if (info.getQuestRequirements() != null)
-		{
-			addFullWidth(section("Unlock notes"));
-			addFullWidth(rows(row("Requires", info.getQuestRequirements())));
-		}
+		addItemRequirements(info, requirementSummary);
 
 		addComparison(info, equippedInfo);
 		addPinnedItemComparison(info);
@@ -1174,15 +1162,222 @@ public class InspectPanel extends PluginPanel
 		addFullWidth(chips(tags));
 	}
 
-	private void addItemSource(ItemInspectInfo info)
+	private void addItemSources(ItemInspectInfo info)
 	{
-		if (info.getSourceSummary() == null)
+		if ((info.getSourcePlan() == null || info.getSourcePlan().isEmpty())
+			&& info.getSourceSummary() == null
+			&& info.getQuestRequirements() == null)
 		{
 			return;
 		}
 
 		addFullWidth(section("Sources"));
-		addFullWidth(chips(splitTags(info.getSourceSummary())));
+		if (info.getSourcePlan() != null && !info.getSourcePlan().isEmpty())
+		{
+			addFullWidth(itemSourcePlanPanel(info.getSourcePlan()));
+			return;
+		}
+
+		if (info.getSourceSummary() != null)
+		{
+			addFullWidth(chips(splitTags(info.getSourceSummary())));
+			return;
+		}
+
+		addFullWidth(message("Requires " + info.getQuestRequirements() + "."));
+	}
+
+	private static JPanel itemSourcePlanPanel(List<ItemSource> sources)
+	{
+		JPanel panel = new JPanel(new GridBagLayout());
+		panel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		panel.setBorder(new EmptyBorder(6, 6, 8, 6));
+
+		GridBagConstraints constraints = new GridBagConstraints();
+		constraints.gridx = 0;
+		constraints.fill = GridBagConstraints.HORIZONTAL;
+		constraints.weightx = 1.0;
+		for (int i = 0; i < sources.size(); i++)
+		{
+			constraints.gridy = i;
+			constraints.insets = new Insets(i == 0 ? 0 : 5, 0, 0, 0);
+			panel.add(itemSourceBlock(sources.get(i)), constraints);
+		}
+
+		Dimension preferred = panel.getPreferredSize();
+		panel.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, preferred.height));
+		panel.setMaximumSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, preferred.height));
+		return panel;
+	}
+
+	private static JPanel itemSourceBlock(ItemSource source)
+	{
+		JPanel block = new JPanel(new GridBagLayout());
+		block.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		block.setBorder(new EmptyBorder(6, 7, 7, 7));
+
+		GridBagConstraints constraints = new GridBagConstraints();
+		constraints.gridx = 0;
+		constraints.weightx = 1.0;
+		constraints.fill = GridBagConstraints.HORIZONTAL;
+		constraints.anchor = GridBagConstraints.WEST;
+
+		JLabel category = new JLabel(source.getCategory());
+		category.setForeground(ColorScheme.BRAND_ORANGE);
+		category.setFont(FontManager.getRunescapeSmallFont());
+		constraints.gridy = 0;
+		constraints.insets = new Insets(0, 0, 3, 0);
+		block.add(category, constraints);
+
+		JTextArea detail = sourceDetailArea(sourceDetail(source), PluginPanel.PANEL_WIDTH - 50);
+		constraints.gridy = 1;
+		constraints.insets = new Insets(0, 0, 0, 0);
+		block.add(detail, constraints);
+
+		Dimension preferred = block.getPreferredSize();
+		block.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 36, preferred.height));
+		block.setMaximumSize(new Dimension(PluginPanel.PANEL_WIDTH - 36, preferred.height));
+		return block;
+	}
+
+	private static JTextArea sourceDetailArea(String text, int width)
+	{
+		JTextArea area = new JTextArea(valueOrDash(text));
+		area.setEditable(false);
+		area.setFocusable(false);
+		area.setLineWrap(true);
+		area.setWrapStyleWord(true);
+		area.setOpaque(false);
+		area.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		area.setFont(FontManager.getRunescapeSmallFont());
+		area.setBorder(new EmptyBorder(0, 0, 0, 0));
+		area.setSize(new Dimension(width, Short.MAX_VALUE));
+		Dimension preferred = area.getPreferredSize();
+		area.setPreferredSize(new Dimension(width, preferred.height));
+		area.setMaximumSize(new Dimension(width, preferred.height));
+		return area;
+	}
+
+	private static String sourceDetail(ItemSource source)
+	{
+		List<String> parts = new ArrayList<>();
+		if (source.getDetails() != null)
+		{
+			for (String detail : source.getDetails())
+			{
+				if (detail != null && !detail.trim().isEmpty())
+				{
+					parts.add(detail.trim());
+				}
+			}
+		}
+		if (source.getRequirements() != null && !source.getRequirements().isEmpty())
+		{
+			parts.add("Levels: " + sourceRequirements(source.getRequirements()));
+		}
+		return parts.isEmpty() ? null : String.join(" ", parts);
+	}
+
+	private static String sourceRequirements(List<ItemSourceRequirement> requirements)
+	{
+		List<String> labels = new ArrayList<>();
+		for (ItemSourceRequirement requirement : requirements)
+		{
+			labels.add(requirement.getSkillName() + " " + requirement.getLevel());
+		}
+		return String.join(", ", labels);
+	}
+
+	private void addItemRequirements(ItemInspectInfo info, ItemRequirementSummary summary)
+	{
+		if (summary != null && (!summary.getMetRequirements().isEmpty() || !summary.getMissingRequirements().isEmpty()))
+		{
+			addFullWidth(section("Requirements"));
+			addFullWidth(itemRequirementsPanel(summary));
+			return;
+		}
+
+		if (hasAny(info.getRequirementAttack(), info.getRequirementStrength(), info.getRequirementDefence(), info.getRequirementRanged(),
+			info.getRequirementMagic(), info.getRequirementPrayer(), info.getRequirementHitpoints(), info.getRequirementSlayer()))
+		{
+			addFullWidth(section("Requirements"));
+			addFullWidth(rows(nonEmptyRows(
+				"Attack", info.getRequirementAttack(),
+				"Strength", info.getRequirementStrength(),
+				"Defence", info.getRequirementDefence(),
+				"Ranged", info.getRequirementRanged(),
+				"Magic", info.getRequirementMagic(),
+				"Prayer", info.getRequirementPrayer(),
+				"Hitpoints", info.getRequirementHitpoints(),
+				"Slayer", info.getRequirementSlayer()
+			)));
+		}
+	}
+
+	private static JPanel itemRequirementsPanel(ItemRequirementSummary summary)
+	{
+		JPanel panel = new JPanel(new GridBagLayout());
+		panel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		panel.setBorder(new EmptyBorder(6, 4, 8, 4));
+
+		GridBagConstraints constraints = new GridBagConstraints();
+		constraints.gridx = 0;
+		constraints.weightx = 1;
+		constraints.fill = GridBagConstraints.HORIZONTAL;
+
+		int rowIndex = 0;
+		int preferredHeight = 14;
+		if (!summary.getMetRequirements().isEmpty())
+		{
+			preferredHeight += addRequiredItemPanelRow(panel, conditionHeader("Met"), constraints, rowIndex++);
+			for (String requirement : summary.getMetRequirements())
+			{
+				preferredHeight += addRequiredItemPanelRow(panel, itemRequirementRow(requirement, true), constraints, rowIndex++);
+			}
+		}
+		if (!summary.getMissingRequirements().isEmpty())
+		{
+			preferredHeight += addRequiredItemPanelRow(panel, conditionHeader("Missing"), constraints, rowIndex++);
+			for (String requirement : summary.getMissingRequirements())
+			{
+				preferredHeight += addRequiredItemPanelRow(panel, itemRequirementRow(requirement, false), constraints, rowIndex++);
+			}
+		}
+
+		panel.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, preferredHeight));
+		panel.setMaximumSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, preferredHeight));
+		return panel;
+	}
+
+	private static JPanel itemRequirementRow(String requirement, boolean met)
+	{
+		JPanel row = new JPanel(new GridBagLayout());
+		row.setOpaque(false);
+
+		GridBagConstraints iconConstraints = new GridBagConstraints();
+		iconConstraints.gridx = 0;
+		iconConstraints.insets = new Insets(2, 2, 2, 6);
+		iconConstraints.anchor = GridBagConstraints.CENTER;
+
+		JLabel icon = new JLabel(loadIcon(met ? STATUS_CHECK_ICON : STATUS_CROSS_ICON), SwingConstants.CENTER);
+		icon.setPreferredSize(new Dimension(18, 18));
+		row.add(icon, iconConstraints);
+
+		GridBagConstraints requirementConstraints = new GridBagConstraints();
+		requirementConstraints.gridx = 1;
+		requirementConstraints.insets = new Insets(2, 0, 2, 2);
+		requirementConstraints.anchor = GridBagConstraints.WEST;
+		requirementConstraints.weightx = 1.0;
+		requirementConstraints.fill = GridBagConstraints.HORIZONTAL;
+
+		JLabel requirementLabel = new JLabel("<html><body style='width:170px'>" + escape(valueOrDash(requirement)) + "</body></html>");
+		requirementLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		requirementLabel.setFont(FontManager.getRunescapeSmallFont());
+		row.add(requirementLabel, requirementConstraints);
+
+		int height = Math.max(30, requirementLabel.getPreferredSize().height + 8);
+		row.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 32, height));
+		return row;
 	}
 
 	private static List<String> splitTags(String value)
@@ -1456,26 +1651,6 @@ public class InspectPanel extends PluginPanel
 	{
 		Double numeric = numericValue(value);
 		return numeric == null ? 0 : numeric;
-	}
-
-	private void addRequirementSummary(ItemRequirementSummary summary)
-	{
-		if (summary == null || (summary.getMetRequirements().isEmpty() && summary.getMissingRequirements().isEmpty()))
-		{
-			return;
-		}
-
-		addFullWidth(section("Requirement check"));
-		List<JPanel> rows = new ArrayList<>();
-		if (!summary.getMetRequirements().isEmpty())
-		{
-			rows.add(row("Met", String.join(", ", summary.getMetRequirements())));
-		}
-		if (!summary.getMissingRequirements().isEmpty())
-		{
-			rows.add(row("Missing", String.join(", ", summary.getMissingRequirements())));
-		}
-		addFullWidth(rows(rows.toArray(new JPanel[0])));
 	}
 
 	private static JPanel playerSummary(int combatLevel, PlayerInspectAnalysis analysis, boolean pvpBlocked)

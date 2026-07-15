@@ -1,5 +1,6 @@
 package com.inspect.item;
 
+import java.util.List;
 import lombok.Builder;
 import lombok.Value;
 
@@ -48,6 +49,7 @@ public class ItemInspectInfo
 	String requirementSlayer;
 	String questRequirements;
 	String sourceSummary;
+	List<ItemSource> sourcePlan;
 	long fetchedAtEpochSecond;
 	String sourceUrl;
 

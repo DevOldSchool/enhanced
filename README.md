@@ -13,7 +13,8 @@ Most features are backed by OSRS Wiki data. Enable OSRS Wiki lookups once in the
 - **Equipment recommendations**: rank owned bank/equipped gear for inspected NPC weaknesses.
 - **Bank highlights**: highlight recommended bank items with rank indicators.
 - **Item prices**: show GE price, high alch, low alch, and high-alch profit or loss.
-- **Requirement summaries**: show item skill requirements and missing levels where available.
+- **Item sources**: show how an item can be obtained from shops, monsters, skilling, quests, and clues where available.
+- **Requirement checks**: show item equip and source skill requirements with local skill readiness.
 - **NPC required items**: show item requirements for monsters that need a finishing item, with inventory/equipment readiness checks.
 - **Drop filters**: filter NPC drops into useful categories like valuable, rare, Slayer-only, clue, Ironman, alchable, and upgrade materials.
 - **Compare tray**: save an NPC, item, or player inspection as the current comparison and reopen it from the sidebar.
@@ -21,7 +22,11 @@ Most features are backed by OSRS Wiki data. Enable OSRS Wiki lookups once in the
 
 ## Item Inspect
 
-Item inspect shows wiki-backed item details, prices, requirements, source tags, gear-role tags, bonuses, and comparison details where available.
+Item inspect shows wiki-backed item details, prices, requirements, sources, gear-role tags, bonuses, and comparison details where available.
+
+The Sources section expands item acquisition into readable categories such as shops, monsters, skilling, quests, and clue-related sources. Source text is cleaned from common wiki templates so quest and creation notes read naturally, and the OSRS Wiki button opens the source page with RuneLite's `LinkBrowser`.
+
+The Requirements section combines equip requirements and source requirements in one readiness panel. Skill requirements are checked against your local real skill levels and update after login or level changes without making another wiki request.
 
 ![Item inspect example](images/item.png)
 
