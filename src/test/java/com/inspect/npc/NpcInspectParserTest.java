@@ -208,6 +208,36 @@ public class NpcInspectParserTest
 	}
 
 	@Test
+	public void ignoresNonItemUnlocksWhenParsingNpcItemRequirements()
+	{
+		String wikitext = "{{Infobox Monster\n"
+			+ "|name = Gargoyle\n"
+			+ "|combat = 111\n"
+			+ "|id = 412\n"
+			+ "}}\n"
+			+ "Players must unlock [[Gargoyle Smasher]] to finish killing gargoyles automatically.\n";
+
+		NpcCombatInfo info = parser.parse(412, "Gargoyle", new NpcWikiLookup("Gargoyle", null, "https://wiki"), wikitext);
+
+		assertEquals(0, info.getItemRequirements().size());
+	}
+
+	@Test
+	public void ignoresSkillRequirementsWhenParsingNpcItemRequirements()
+	{
+		String wikitext = "{{Infobox Monster\n"
+			+ "|name = Abyssal demon\n"
+			+ "|combat = 124\n"
+			+ "|id = 415\n"
+			+ "}}\n"
+			+ "Players require 85 Slayer to kill abyssal demons.\n";
+
+		NpcCombatInfo info = parser.parse(415, "Abyssal demon", new NpcWikiLookup("Abyssal_demon", null, "https://wiki"), wikitext);
+
+		assertEquals(0, info.getItemRequirements().size());
+	}
+
+	@Test
 	public void keepsDropsAcrossSubheadingsButStopsAtNextTopLevelHeading()
 	{
 		String wikitext = "{{Infobox Monster\n"

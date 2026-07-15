@@ -183,6 +183,31 @@ public class InspectPanelTest
 	}
 
 	@Test
+	public void switchingNpcDropFiltersRerendersDropRows() throws Exception
+	{
+		UiSnapshot snapshot = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			NpcCombatInfo info = NpcCombatInfo.builder()
+				.displayName("Abyssal demon")
+				.valuableDrops("Abyssal whip, Brimstone key")
+				.rareDrops("Abyssal whip")
+				.ironmanDrops("Grimy ranarr weed")
+				.build();
+
+			panel.showInfo(info, EquipmentRecommendation.preview(info), null, Collections.emptyList());
+			clickButton(panel, "Ironman");
+			return UiSnapshot.capture(panel);
+		});
+
+		assertTrue(snapshot.text.contains("Drop filters"));
+		assertTrue(snapshot.text.contains("Ironman"));
+		assertTrue(snapshot.text.contains("Grimy ranarr weed"));
+		assertFalse(snapshot.text.contains("Abyssal whip"));
+		assertFalse(snapshot.text.contains("Brimstone key"));
+	}
+
+	@Test
 	public void rendersNpcDropRowsFromPrecomputedItemIdsWithoutResolvingDefinitions() throws Exception
 	{
 		UiSnapshot snapshot = onEdt(() ->
@@ -202,6 +227,26 @@ public class InspectPanelTest
 		assertTrue(snapshot.text.contains("Drop filters"));
 		assertTrue(snapshot.text.contains("Abyssal whip"));
 		assertTrue(snapshot.popupActions.contains("Inspect item"));
+	}
+
+	@Test
+	public void unresolvedNpcDropRowsRenderWithoutInspectPopup() throws Exception
+	{
+		UiSnapshot snapshot = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			NpcCombatInfo info = NpcCombatInfo.builder()
+				.displayName("Kurask")
+				.valuableDrops("Leaf-bladed battleaxe")
+				.build();
+
+			panel.showInfo(info, EquipmentRecommendation.preview(info), null, Collections.emptyList(), Collections.emptyMap());
+			return UiSnapshot.capture(panel);
+		});
+
+		assertTrue(snapshot.text.contains("Drop filters"));
+		assertTrue(snapshot.text.contains("Leaf-bladed battleaxe"));
+		assertFalse(snapshot.popupActions.contains("Inspect item"));
 	}
 
 	@Test
