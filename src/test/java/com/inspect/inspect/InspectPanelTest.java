@@ -5,6 +5,9 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import com.inspect.item.ItemInspectInfo;
+import com.inspect.item.ItemRequirementSummary;
+import com.inspect.item.ItemSource;
+import com.inspect.item.ItemSourceRequirement;
 import com.inspect.npc.EquipmentRecommendation;
 import com.inspect.npc.NpcCombatInfo;
 import com.inspect.npc.NpcItemRequirement;
@@ -28,6 +31,7 @@ import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPopupMenu;
 import javax.swing.SwingUtilities;
+import javax.swing.JTextArea;
 import org.junit.Test;
 
 public class InspectPanelTest
@@ -321,6 +325,70 @@ public class InspectPanelTest
 	}
 
 	@Test
+	public void rendersItemSourcesAsSingleDetailedSection() throws Exception
+	{
+		UiSnapshot snapshot = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			ItemInspectInfo item = ItemInspectInfo.builder()
+				.itemId(1079)
+				.displayName("Rune platelegs")
+				.sourceSummary("Skilling, Quests")
+				.sourcePlan(Arrays.asList(
+					new ItemSource(
+						"Skilling",
+						Collections.singletonList("They can be created with level 99 Smithing and 3 runite bars."),
+						Collections.singletonList(new ItemSourceRequirement("Smithing", 99, "Skilling"))),
+					new ItemSource(
+						"Quests",
+						Collections.singletonList("It requires 40 Defence and completion of Dragon Slayer I to equip."),
+						Collections.singletonList(new ItemSourceRequirement("Defence", 40, "Quests")))
+				))
+				.questRequirements("Dragon Slayer I")
+				.build();
+
+			panel.showItemInfo(item, null, null, null);
+			return UiSnapshot.capture(panel);
+		});
+
+		assertEquals(1, countOccurrences(snapshot.text, "Sources"));
+		assertTrue(snapshot.text.contains("Skilling"));
+		assertTrue(snapshot.text.contains("They can be created with level 99 Smithing and 3 runite bars."));
+		assertTrue(snapshot.text.contains("Quests"));
+		assertTrue(snapshot.text.contains("It requires 40 Defence and completion of Dragon Slayer I to equip."));
+		assertFalse(snapshot.text.contains("How to get"));
+		assertFalse(snapshot.text.contains("Unlock notes"));
+	}
+
+	@Test
+	public void rendersItemRequirementsAsSingleReadinessSection() throws Exception
+	{
+		UiSnapshot snapshot = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			ItemInspectInfo item = ItemInspectInfo.builder()
+				.itemId(1127)
+				.displayName("Rune platebody")
+				.requirementDefence("40")
+				.build();
+			ItemRequirementSummary requirements = new ItemRequirementSummary(
+				Collections.singletonList("Defence 40 (81)"),
+				Collections.singletonList("Smithing 99 for skilling (71)")
+			);
+
+			panel.showItemInfo(item, null, requirements, null);
+			return UiSnapshot.capture(panel);
+		});
+
+		assertEquals(1, countOccurrences(snapshot.text, "Requirements"));
+		assertTrue(snapshot.text.contains("Met"));
+		assertTrue(snapshot.text.contains("Defence 40 (81)"));
+		assertTrue(snapshot.text.contains("Missing"));
+		assertTrue(snapshot.text.contains("Smithing 99 for skilling (71)"));
+		assertFalse(snapshot.text.contains("Requirement check"));
+	}
+
+	@Test
 	public void rendersSavedPlayerCompareTrayAndComparison() throws Exception
 	{
 		UiSnapshot snapshot = onEdt(() ->
@@ -500,6 +568,18 @@ public class InspectPanelTest
 		return null;
 	}
 
+	private static int countOccurrences(String value, String needle)
+	{
+		int count = 0;
+		int index = 0;
+		while ((index = value.indexOf(needle, index)) >= 0)
+		{
+			count++;
+			index += needle.length();
+		}
+		return count;
+	}
+
 	private static final class UiSnapshot
 	{
 		private final String text;
@@ -534,6 +614,10 @@ public class InspectPanelTest
 				else if (component instanceof AbstractButton)
 				{
 					append(text, ((AbstractButton) component).getText());
+				}
+				else if (component instanceof JTextArea)
+				{
+					append(text, ((JTextArea) component).getText());
 				}
 
 				if (component instanceof JComponent)
