@@ -6,6 +6,7 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 public class ItemInspectParserTest
 {
@@ -201,6 +202,25 @@ public class ItemInspectParserTest
 		assertEquals("Smithing", info.getSourcePlan().get(0).getRequirements().get(0).getSkillName());
 		assertEquals(99, info.getSourcePlan().get(0).getRequirements().get(0).getLevel());
 		assertEquals(1, info.getSourcePlan().get(0).getRequirements().size());
+	}
+
+	@Test
+	public void doesNotAttachSkillingRequirementsToMonsterSources()
+	{
+		String wikitext = "{{Infobox Item\n"
+			+ "|name = Rune thrownaxe\n"
+			+ "|id = 805\n"
+			+ "}}\n"
+			+ "'''Rune thrownaxes''' require level 40 [[Attack]] to wield.\n"
+			+ "They are dropped by monsters and can be created with level 90 [[Smithing]].\n";
+
+		ItemInspectInfo info = parser.parse(805, "Rune thrownaxe", new ItemWikiLookup("Rune_thrownaxe", null, "https://wiki"), wikitext);
+
+		assertEquals("Monsters", info.getSourcePlan().get(0).getCategory());
+		assertTrue(info.getSourcePlan().get(0).getRequirements().isEmpty());
+		assertEquals("Skilling", info.getSourcePlan().get(1).getCategory());
+		assertEquals("Smithing", info.getSourcePlan().get(1).getRequirements().get(0).getSkillName());
+		assertEquals(90, info.getSourcePlan().get(1).getRequirements().get(0).getLevel());
 	}
 
 	@Test

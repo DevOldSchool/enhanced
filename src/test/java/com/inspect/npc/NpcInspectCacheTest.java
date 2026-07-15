@@ -5,6 +5,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonObject;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -104,6 +105,29 @@ public class NpcInspectCacheTest
 
 		Path payload = directory.resolve(expected.cacheKey() + ".json");
 		Files.write(payload, gson.toJson(info(9999, 1000L)).getBytes(StandardCharsets.UTF_8));
+
+		NpcInspectCache restored = new NpcInspectCache(gson, directory);
+		Optional<NpcCombatInfo> cached = restored.get(3028, 1100L, 7).get();
+
+		assertFalse(cached.isPresent());
+		assertFalse(Files.exists(payload));
+		restored.shutDown();
+	}
+
+	@Test
+	public void rejectsDiskPayloadFromOldCacheSchema() throws Exception
+	{
+		Path directory = temporaryFolder.newFolder().toPath();
+		Gson gson = new Gson();
+		NpcCombatInfo info = info(3028, 1000L);
+		NpcInspectCache cache = new NpcInspectCache(gson, directory);
+		cache.put(info).get();
+		cache.shutDown();
+
+		Path payload = directory.resolve(info.cacheKey() + ".json");
+		JsonObject oldPayload = gson.toJsonTree(info).getAsJsonObject();
+		oldPayload.remove("cacheSchemaVersion");
+		Files.write(payload, gson.toJson(oldPayload).getBytes(StandardCharsets.UTF_8));
 
 		NpcInspectCache restored = new NpcInspectCache(gson, directory);
 		Optional<NpcCombatInfo> cached = restored.get(3028, 1100L, 7).get();

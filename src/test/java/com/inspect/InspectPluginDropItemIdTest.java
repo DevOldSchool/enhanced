@@ -1,7 +1,11 @@
 package com.inspect;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 
+import com.inspect.npc.NpcItemRequirement;
+import java.util.Arrays;
+import java.util.Collections;
 import net.runelite.api.gameval.ItemID;
 import org.junit.Test;
 
@@ -19,5 +23,21 @@ public class InspectPluginDropItemIdTest
 		assertEquals(ItemID.KONAR_KEY, InspectPlugin.dropItemIdFallback(" Brimstone key "));
 		assertEquals(ItemID.SLAYER_ROOF_KEY, InspectPlugin.dropItemIdFallback("brittle key"));
 		assertEquals(-1, InspectPlugin.dropItemIdFallback("Unknown key"));
+	}
+
+	@Test
+	public void emptyNpcItemRequirementAlternativesAreNotDisplayed()
+	{
+		assertNull(InspectPlugin.npcItemRequirementWithAlternatives(null));
+		assertNull(InspectPlugin.npcItemRequirementWithAlternatives(Collections.emptyList()));
+	}
+
+	@Test
+	public void npcItemRequirementLabelUsesOnlyResolvedAlternatives()
+	{
+		NpcItemRequirement requirement = InspectPlugin.npcItemRequirementWithAlternatives(Arrays.asList("Rock hammer", "Granite maul"));
+
+		assertEquals("Rock hammer or Granite maul", requirement.getLabel());
+		assertEquals(Arrays.asList("Rock hammer", "Granite maul"), requirement.getAlternatives());
 	}
 }

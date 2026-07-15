@@ -633,9 +633,22 @@ class ItemInspectParser
 		while (matcher.find())
 		{
 			String skill = normalizeSkillName(reversed ? matcher.group(1) : matcher.group(2));
+			if (!isSourceRequirementRelevant(skill, context))
+			{
+				continue;
+			}
 			int level = Integer.parseInt(reversed ? matcher.group(2) : matcher.group(1));
 			requirements.put(skill + ":" + level, new ItemSourceRequirement(skill, level, context));
 		}
+	}
+
+	private static boolean isSourceRequirementRelevant(String skill, String context)
+	{
+		if ("Monsters".equals(context))
+		{
+			return "Slayer".equals(skill);
+		}
+		return true;
 	}
 
 	private static String normalizeSkillName(String skill)

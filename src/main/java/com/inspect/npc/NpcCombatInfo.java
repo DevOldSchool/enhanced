@@ -9,7 +9,11 @@ import lombok.Value;
 @Builder
 public class NpcCombatInfo
 {
+	public static final int CACHE_SCHEMA_VERSION = 2;
+
 	int npcId;
+	@Builder.Default
+	int cacheSchemaVersion = CACHE_SCHEMA_VERSION;
 	String wikiPage;
 	String wikiAnchor;
 	String displayName;
@@ -83,6 +87,11 @@ public class NpcCombatInfo
 
 		long ttlSeconds = ttlDays * 24L * 60L * 60L;
 		return nowEpochSecond - fetchedAtEpochSecond > ttlSeconds;
+	}
+
+	public boolean hasCurrentCacheSchema()
+	{
+		return cacheSchemaVersion == CACHE_SCHEMA_VERSION;
 	}
 
 	private static String sanitize(String value)
