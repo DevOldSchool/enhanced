@@ -27,6 +27,7 @@ import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import java.awt.Image;
 import java.awt.Insets;
+import java.awt.Point;
 import java.awt.RenderingHints;
 import java.awt.Stroke;
 import java.net.URLEncoder;
@@ -43,7 +44,9 @@ import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JTextArea;
+import javax.swing.JViewport;
 import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
 import javax.swing.border.EmptyBorder;
 
 import lombok.Setter;
@@ -65,7 +68,8 @@ public class InspectPanel extends PluginPanel
 	private static final String STATUS_CHECK_ICON = "status-check.png";
 	private static final String STATUS_CROSS_ICON = "status-cross.png";
 	private static final String EQUIPMENT_SLOT_PATH = "/com/inspect/equipment-slots/";
-	private static final int MESSAGE_HTML_WIDTH = 190;
+	private static final int MESSAGE_TEXT_WIDTH = PluginPanel.PANEL_WIDTH - 48;
+	private static final int MAX_RECENT_SEARCHES = 4;
 	private static final DecimalFormat DELTA_FORMAT = new DecimalFormat("0.###");
 	private final SpriteManager spriteManager;
 	private final ItemManager itemManager;
@@ -92,6 +96,9 @@ public class InspectPanel extends PluginPanel
 	private Runnable lastPlayerRenderer;
 	private String lastSearchText = "";
 	private String lastSearchType = "Item";
+	private final Deque<SearchChip> recentSearches = new ArrayDeque<>();
+	private boolean scrollToTopAfterRefresh;
+	private boolean preserveScrollOnNextReset;
 
 	@Inject
 	public InspectPanel(SpriteManager spriteManager, ItemManager itemManager)
@@ -164,7 +171,10 @@ public class InspectPanel extends PluginPanel
 		activeTab = type;
 		reset();
 		addFullWidth(searchTitle(type + " Search"));
-		addFullWidth(message("No " + type.toLowerCase() + " info was found for " + query + "."));
+		addFullWidth(message("No " + type.toLowerCase() + " info was found for " + query
+			+ ". Try a broader name, check the spelling, or open the exact wiki page if you know the title."));
+		addFullWidth(exactWikiPageButton(query));
+		addRecoverySearches(type, query);
 		refresh();
 	}
 
@@ -208,7 +218,10 @@ public class InspectPanel extends PluginPanel
 	{
 		reset();
 		addFullWidth(title("NPC Inspect"));
-		addFullWidth(message("No combat info was found for " + npcName + "."));
+		addFullWidth(message("No combat info was found for " + npcName
+			+ ". Try searching the base NPC name, or open the exact wiki page if you know the title."));
+		addFullWidth(exactWikiPageButton(npcName));
+		addRecoverySearches("NPC", npcName);
 		refresh();
 	}
 
@@ -233,7 +246,10 @@ public class InspectPanel extends PluginPanel
 	{
 		reset();
 		addFullWidth(title("Item Inspect"));
-		addFullWidth(message("No item info was found for " + itemName + "."));
+		addFullWidth(message("No item info was found for " + itemName
+			+ ". Try a shorter item name, or open the exact wiki page if you know the title."));
+		addFullWidth(exactWikiPageButton(itemName));
+		addRecoverySearches("Item", itemName);
 		refresh();
 	}
 
@@ -391,7 +407,6 @@ public class InspectPanel extends PluginPanel
 		));
 		addPriceSummary(priceSummary);
 		addItemTags(info);
-		addItemSources(info);
 
 		if (hasAny(info.getAttackStab(), info.getAttackSlash(), info.getAttackCrush(), info.getAttackMagic(), info.getAttackRanged()))
 		{
@@ -432,6 +447,7 @@ public class InspectPanel extends PluginPanel
 
 		addComparison(info, equippedInfo);
 		addPinnedItemComparison(info);
+		addItemSources(info);
 
 		if (info.getExamine() != null)
 		{
@@ -728,6 +744,7 @@ public class InspectPanel extends PluginPanel
 			activeDropFilter = filter.label;
 			if (lastNpcRenderer != null)
 			{
+				preserveScrollOnNextReset = true;
 				lastNpcRenderer.run();
 			}
 		});
@@ -2138,6 +2155,8 @@ public class InspectPanel extends PluginPanel
 	private void reset()
 	{
 		removeAll();
+		scrollToTopAfterRefresh = !preserveScrollOnNextReset;
+		preserveScrollOnNextReset = false;
 		addSearchControls();
 		addTabControls();
 		addPinnedTray();
@@ -2152,6 +2171,21 @@ public class InspectPanel extends PluginPanel
 	{
 		revalidate();
 		repaint();
+		if (scrollToTopAfterRefresh)
+		{
+			scrollToTopAfterRefresh = false;
+			scrollToTop();
+			SwingUtilities.invokeLater(this::scrollToTop);
+		}
+	}
+
+	private void scrollToTop()
+	{
+		JViewport viewport = (JViewport) SwingUtilities.getAncestorOfClass(JViewport.class, this);
+		if (viewport != null)
+		{
+			viewport.setViewPosition(new Point(0, 0));
+		}
 	}
 
 	private void addSearchControls()
@@ -2159,13 +2193,12 @@ public class InspectPanel extends PluginPanel
 		JPanel panel = new JPanel(new GridBagLayout());
 		panel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		panel.setBorder(new EmptyBorder(6, 4, 6, 4));
-		panel.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, 66));
-		panel.setMaximumSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, 66));
 
 		JComboBox<String> type = new JComboBox<>(new String[]{"Item", "NPC"});
 		type.setSelectedItem(lastSearchType);
 		type.setFont(FontManager.getRunescapeSmallFont());
 		type.setFocusable(false);
+		type.addActionListener(event -> lastSearchType = String.valueOf(type.getSelectedItem()));
 
 		IconTextField query = new IconTextField();
 		query.setIcon(IconTextField.Icon.SEARCH);
@@ -2177,6 +2210,7 @@ public class InspectPanel extends PluginPanel
 		query.setHoverBackgroundColor(ColorScheme.DARK_GRAY_HOVER_COLOR);
 		query.addClearListener(() ->
 		{
+			lastSearchType = String.valueOf(type.getSelectedItem());
 			lastSearchText = "";
 			showEmpty();
 		});
@@ -2187,17 +2221,37 @@ public class InspectPanel extends PluginPanel
 		search.setBackground(ColorScheme.MEDIUM_GRAY_COLOR);
 		search.setForeground(ColorScheme.BRAND_ORANGE);
 
+		JButton exactWiki = new JButton("Open exact Wiki page");
+		exactWiki.setFont(FontManager.getRunescapeSmallFont());
+		exactWiki.setFocusPainted(false);
+		exactWiki.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		exactWiki.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		exactWiki.setToolTipText("Open the typed query as an exact OSRS Wiki page title.");
+
 		Runnable submit = () ->
 		{
 			lastSearchType = String.valueOf(type.getSelectedItem());
 			lastSearchText = query.getText().trim();
 			if (!lastSearchText.isEmpty() && searchHandler != null)
 			{
+				rememberSearch(lastSearchType, lastSearchText);
 				searchHandler.search(lastSearchType, lastSearchText);
 			}
 		};
 		query.addActionListener(event -> submit.run());
 		search.addActionListener(event -> submit.run());
+		exactWiki.addActionListener(event ->
+		{
+			String wikiQuery = query.getText().trim();
+			if (!wikiQuery.isEmpty())
+			{
+				lastSearchType = String.valueOf(type.getSelectedItem());
+				lastSearchText = wikiQuery;
+				rememberSearch(lastSearchType, lastSearchText);
+				LinkBrowser.browse(wikiPageUrl(wikiQuery));
+				refreshActiveView();
+			}
+		});
 
 		GridBagConstraints typeConstraints = new GridBagConstraints();
 		typeConstraints.gridx = 0;
@@ -2219,11 +2273,98 @@ public class InspectPanel extends PluginPanel
 		searchConstraints.gridx = 0;
 		searchConstraints.gridy = 1;
 		searchConstraints.gridwidth = 2;
+		searchConstraints.insets = new Insets(0, 0, 4, 0);
 		searchConstraints.fill = GridBagConstraints.HORIZONTAL;
 		searchConstraints.weightx = 1.0;
 		panel.add(search, searchConstraints);
 
+		GridBagConstraints exactWikiConstraints = new GridBagConstraints();
+		exactWikiConstraints.gridx = 0;
+		exactWikiConstraints.gridy = 2;
+		exactWikiConstraints.gridwidth = 2;
+		exactWikiConstraints.insets = new Insets(0, 0, 4, 0);
+		exactWikiConstraints.fill = GridBagConstraints.HORIZONTAL;
+		exactWikiConstraints.weightx = 1.0;
+		panel.add(exactWiki, exactWikiConstraints);
+
+		if (!recentSearches.isEmpty())
+		{
+			GridBagConstraints chipsConstraints = new GridBagConstraints();
+			chipsConstraints.gridx = 0;
+			chipsConstraints.gridy = 3;
+			chipsConstraints.gridwidth = 2;
+			chipsConstraints.fill = GridBagConstraints.HORIZONTAL;
+			chipsConstraints.weightx = 1.0;
+			panel.add(searchChips(new ArrayList<>(recentSearches)), chipsConstraints);
+		}
+
+		Dimension preferred = panel.getPreferredSize();
+		Dimension size = new Dimension(PluginPanel.PANEL_WIDTH - 24, preferred.height);
+		panel.setPreferredSize(size);
+		panel.setMaximumSize(size);
 		addFullWidth(panel);
+	}
+
+	private void rememberSearch(String type, String query)
+	{
+		if (query == null || query.trim().isEmpty())
+		{
+			return;
+		}
+
+		SearchChip chip = new SearchChip(type, query.trim());
+		recentSearches.removeIf(existing -> existing.matches(chip));
+		recentSearches.addFirst(chip);
+		while (recentSearches.size() > MAX_RECENT_SEARCHES)
+		{
+			recentSearches.removeLast();
+		}
+	}
+
+	private JPanel searchChips(List<SearchChip> chips)
+	{
+		JPanel panel = new JPanel(new GridBagLayout());
+		panel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+
+		GridBagConstraints constraints = new GridBagConstraints();
+		constraints.fill = GridBagConstraints.HORIZONTAL;
+		constraints.weightx = 1.0;
+		constraints.insets = new Insets(1, 1, 1, 1);
+		int shown = Math.min(chips.size(), MAX_RECENT_SEARCHES);
+		for (int i = 0; i < shown; i++)
+		{
+			constraints.gridx = i % 2;
+			constraints.gridy = i / 2;
+			panel.add(searchChipButton(chips.get(i)), constraints);
+		}
+
+		int rows = Math.max(1, (int) Math.ceil(shown / 2.0d));
+		panel.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 32, rows * 25));
+		panel.setMaximumSize(new Dimension(PluginPanel.PANEL_WIDTH - 32, rows * 25));
+		return panel;
+	}
+
+	private JButton searchChipButton(SearchChip chip)
+	{
+		JButton button = new JButton(chip.label());
+		button.setHorizontalAlignment(SwingConstants.CENTER);
+		button.setFocusPainted(false);
+		button.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		button.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		button.setFont(FontManager.getRunescapeSmallFont());
+		button.setBorder(new EmptyBorder(4, 6, 4, 6));
+		button.setToolTipText("Search " + chip.type + " for " + chip.query);
+		button.addActionListener(event ->
+		{
+			lastSearchType = chip.type;
+			lastSearchText = chip.query;
+			rememberSearch(chip.type, chip.query);
+			if (searchHandler != null)
+			{
+				searchHandler.search(chip.type, chip.query);
+			}
+		});
+		return button;
 	}
 
 	private void addTabControls()
@@ -2253,6 +2394,11 @@ public class InspectPanel extends PluginPanel
 
 	private void showTab(String tab)
 	{
+		if ("Item".equals(tab) || "NPC".equals(tab))
+		{
+			lastSearchType = tab;
+		}
+
 		switch (tab)
 		{
 			case "Item":
@@ -2326,14 +2472,22 @@ public class InspectPanel extends PluginPanel
 		return label;
 	}
 
-	private static JLabel message(String text)
+	private static JTextArea message(String text)
 	{
-		JLabel label = new JLabel("<html><body style='width:" + MESSAGE_HTML_WIDTH + "px'>" + escape(text) + "</body></html>");
-		label.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
-		label.setBorder(new EmptyBorder(8, 4, 8, 4));
-		label.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, label.getPreferredSize().height));
-		label.setMaximumSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, label.getPreferredSize().height));
-		return label;
+		JTextArea area = new JTextArea(text == null ? "" : text);
+		area.setEditable(false);
+		area.setFocusable(false);
+		area.setLineWrap(true);
+		area.setWrapStyleWord(true);
+		area.setOpaque(false);
+		area.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		area.setFont(FontManager.getRunescapeSmallFont());
+		area.setBorder(new EmptyBorder(8, 4, 8, 4));
+		area.setSize(new Dimension(MESSAGE_TEXT_WIDTH, Short.MAX_VALUE));
+		Dimension preferred = area.getPreferredSize();
+		area.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, preferred.height));
+		area.setMaximumSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, preferred.height));
+		return area;
 	}
 
 	private void addErrorMessage(String userMessage, String detail)
@@ -2347,6 +2501,79 @@ public class InspectPanel extends PluginPanel
 			details.setEnabled(false);
 		});
 		addFullWidth(details);
+	}
+
+	private void addRecoverySearches(String type, String query)
+	{
+		List<SearchChip> retries = recoverySearches(type, query);
+		if (!retries.isEmpty())
+		{
+			addFullWidth(searchChips(retries));
+		}
+	}
+
+	private static List<SearchChip> recoverySearches(String type, String query)
+	{
+		if (query == null || query.trim().isEmpty())
+		{
+			return Collections.emptyList();
+		}
+
+		List<SearchChip> retries = new ArrayList<>();
+		String normalized = SearchQueryNormalizer.normalize(type, query);
+		addRecoverySearch(retries, type, normalized);
+		addRecoverySearch(retries, type, query.replace('_', ' ').replace('-', ' ').trim());
+		addRecoverySearch(retries, type, stripParenthetical(query));
+		if (query.endsWith("s") && query.length() > 3)
+		{
+			addRecoverySearch(retries, type, query.substring(0, query.length() - 1));
+		}
+		return retries;
+	}
+
+	private static void addRecoverySearch(List<SearchChip> retries, String type, String query)
+	{
+		if (query == null || query.trim().isEmpty())
+		{
+			return;
+		}
+
+		SearchChip chip = new SearchChip(type, query.trim());
+		for (SearchChip existing : retries)
+		{
+			if (existing.matches(chip))
+			{
+				return;
+			}
+		}
+		retries.add(chip);
+	}
+
+	private static String stripParenthetical(String query)
+	{
+		int index = query.indexOf('(');
+		if (index <= 0)
+		{
+			return query;
+		}
+		return query.substring(0, index).trim();
+	}
+
+	private static JButton exactWikiPageButton(String query)
+	{
+		JButton button = new JButton("Open exact Wiki page");
+		String url = wikiPageUrl(query);
+		button.setToolTipText(url);
+		button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+		button.setFocusPainted(false);
+		button.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		button.setForeground(ColorScheme.BRAND_ORANGE);
+		button.setFont(FontManager.getRunescapeSmallFont());
+		button.setBorder(new EmptyBorder(8, 4, 8, 4));
+		button.setPreferredSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, 30));
+		button.setMaximumSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, 30));
+		button.addActionListener(event -> LinkBrowser.browse(url));
+		return button;
 	}
 
 	private static JButton sourceButton(String sourceUrl)
@@ -2363,6 +2590,22 @@ public class InspectPanel extends PluginPanel
 		button.setMaximumSize(new Dimension(PluginPanel.PANEL_WIDTH - 24, 30));
 		button.addActionListener(event -> LinkBrowser.browse(sourceUrl));
 		return button;
+	}
+
+	private static String wikiPageUrl(String query)
+	{
+		String page = query == null ? "" : query
+			.replace('\u00A0', ' ')
+			.trim()
+			.replaceAll("\\s+", "_");
+		if (page.isEmpty())
+		{
+			page = "Special:Search";
+		}
+		String encodedPage = URLEncoder.encode(page, StandardCharsets.UTF_8)
+			.replace("+", "_")
+			.replace("%3A", ":");
+		return "https://oldschool.runescape.wiki/w/" + encodedPage;
 	}
 
 	private static JLabel section(String text)
@@ -2860,6 +3103,30 @@ public class InspectPanel extends PluginPanel
 				int y = (SIZE - drawHeight) / 2;
 				graphics.drawImage(itemImage, x, y, drawWidth, drawHeight, this);
 			}
+		}
+	}
+
+	private static final class SearchChip
+	{
+		private final String type;
+		private final String query;
+
+		private SearchChip(String type, String query)
+		{
+			this.type = type == null ? "Item" : type;
+			this.query = query == null ? "" : query;
+		}
+
+		private String label()
+		{
+			return type + ": " + query;
+		}
+
+		private boolean matches(SearchChip other)
+		{
+			return other != null
+				&& type.equals(other.type)
+				&& query.equalsIgnoreCase(other.query);
 		}
 	}
 

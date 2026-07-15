@@ -21,6 +21,8 @@ class NpcInspectParser
 	private static final Pattern DROP_LINE = Pattern.compile("\\|name\\s*=\\s*([^\\n|}]+)", Pattern.CASE_INSENSITIVE);
 	private static final Pattern DROPS_HEADING = Pattern.compile("(?im)^==[ \\t]*Drops[ \\t]*==[ \\t]*$");
 	private static final Pattern LEVEL_TWO_HEADING = Pattern.compile("(?m)^==(?!=)[^\\r\\n]*?(?<![=])==[ \\t]*$");
+	private static final Pattern ITEM_REQUIREMENT_CUE = Pattern.compile("\\b(?:must|need(?:ed)?|requires?|required|use|without)\\b", Pattern.CASE_INSENSITIVE);
+	private static final Pattern ITEM_REQUIREMENT_TARGET = Pattern.compile("\\b(?:kill(?:ing)?|finish(?:ing)?|defeat(?:ing)?|slay(?:ing)?)\\b", Pattern.CASE_INSENSITIVE);
 
 	NpcCombatInfo parse(int npcId, String fallbackName, NpcWikiLookup lookup, String wikitext)
 	{
@@ -428,8 +430,19 @@ class NpcInspectParser
 	private static boolean isItemRequirementSentence(String sentence)
 	{
 		String lower = sentence.toLowerCase(Locale.ENGLISH);
-		return containsAny(lower, "require", "must", "need", "bring", "without")
-			&& containsAny(lower, "kill", "finish", "defeat", "slay");
+		if (containsAny(lower,
+			"not required",
+			"not need",
+			"not needed",
+			"not necessary",
+			"no requirement",
+			"without needing"))
+		{
+			return false;
+		}
+
+		return ITEM_REQUIREMENT_CUE.matcher(sentence).find()
+			&& ITEM_REQUIREMENT_TARGET.matcher(sentence).find();
 	}
 
 	private static List<String> itemRequirementAlternatives(String sentence)

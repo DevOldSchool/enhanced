@@ -172,6 +172,7 @@ class NpcInspectCache
 				NpcCombatInfo info = gson.fromJson(reader, NpcCombatInfo.class);
 				if (info == null
 					|| info.getNpcId() != npcId
+					|| !info.hasCurrentCacheSchema()
 					|| !cacheKey.equals(info.cacheKey())
 					|| info.isExpired(nowEpochSecond, ttlDays))
 				{
@@ -245,6 +246,7 @@ class NpcInspectCache
 			NpcCombatInfo info = gson.fromJson(reader, NpcCombatInfo.class);
 			if (info == null
 				|| info.getNpcId() != npcId
+				|| !info.hasCurrentCacheSchema()
 				|| !cacheKey.equals(info.cacheKey())
 				|| info.isExpired(nowEpochSecond, ttlDays))
 			{

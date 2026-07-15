@@ -238,6 +238,46 @@ public class NpcInspectParserTest
 	}
 
 	@Test
+	public void ignoresRecommendedAndSetupLinksWhenParsingNpcItemRequirements()
+	{
+		String wikitext = "{{Infobox Monster\n"
+			+ "|name = Hespori\n"
+			+ "|combat = 284\n"
+			+ "|id = 8583\n"
+			+ "}}\n"
+			+ "The '''Hespori''' is a [[Farming]] boss which requires {{SCP|Farming|65|link=yes}} {{Boostable|yes}} to access.\n"
+			+ "To fight the Hespori, you must first plant a [[hespori seed]] in the [[hespori patch]].\n"
+			+ "You will need a [[rake]] and a [[seed dibber]] unless the Farming portion of [[Barbarian Training]] has been completed.\n"
+			+ "A [[toxic blowpipe]] with [[dart]]s and [[antipoison]] are useful, but not required to kill Hespori.\n"
+			+ "The minimum [[HiScores]] killcount required for the Hespori has been lowered from 10 to 5.\n";
+
+		NpcCombatInfo info = parser.parse(8583, "Hespori", new NpcWikiLookup("Hespori", null, "https://wiki"), wikitext);
+
+		assertEquals(0, info.getItemRequirements().size());
+	}
+
+	@Test
+	public void ignoresGreenDragonLocationAndClueLinksWhenParsingNpcItemRequirements()
+	{
+		String wikitext = "{{Infobox Monster\n"
+			+ "|name = Green dragon\n"
+			+ "|combat = 79\n"
+			+ "|id = 260\n"
+			+ "}}\n"
+			+ "'''Green dragons''' are found in various locations within the [[Wilderness]] as well as in the [[Corsair Cove Dungeon]].\n"
+			+ "{{LocLine\n"
+			+ "|name = Green dragon\n"
+			+ "|location = [[Corsair Cove Dungeon]]/[[Myths' Guild|Myths' Guild (basement)]]<ref group=\"l\">Requires completion of [[Dragon Slayer II]]</ref>\n"
+			+ "}}\n"
+			+ "*{{CrypticNPC|Killing a green dragon|elite|Mix yellow with blue and add heat, make sure you bring protection.}} "
+			+ "A [[brutal green dragon]] may also be killed for this step.\n";
+
+		NpcCombatInfo info = parser.parse(260, "Green dragon", new NpcWikiLookup("Green_dragon", null, "https://wiki"), wikitext);
+
+		assertEquals(0, info.getItemRequirements().size());
+	}
+
+	@Test
 	public void keepsDropsAcrossSubheadingsButStopsAtNextTopLevelHeading()
 	{
 		String wikitext = "{{Infobox Monster\n"

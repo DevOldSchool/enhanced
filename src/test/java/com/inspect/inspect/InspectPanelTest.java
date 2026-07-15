@@ -17,6 +17,8 @@ import com.inspect.player.PlayerEquipmentItem;
 import com.inspect.player.PlayerInspectAnalysis;
 import java.awt.Component;
 import java.awt.Container;
+import java.awt.Dimension;
+import java.awt.Point;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Collections;
@@ -27,15 +29,162 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.AbstractButton;
+import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPopupMenu;
+import javax.swing.JScrollPane;
 import javax.swing.SwingUtilities;
 import javax.swing.JTextArea;
+import net.runelite.client.ui.PluginPanel;
 import org.junit.Test;
 
 public class InspectPanelTest
 {
+	@Test
+	public void normalizesFuzzySearchAliases()
+	{
+		assertEquals("Dragon scimitar", SearchQueryNormalizer.normalize("Item", "d-scim"));
+		assertEquals("Abyssal whip", SearchQueryNormalizer.normalize("Item", "whip"));
+		assertEquals("black dragon scimitar", SearchQueryNormalizer.normalize("Item", "blk drag scim"));
+		assertEquals("Abyssal demon", SearchQueryNormalizer.normalize("NPC", "abby-demons"));
+	}
+
+	@Test
+	public void searchNotFoundShowsRecoveryActionsAndRecentQueryChips() throws Exception
+	{
+		AtomicReference<String> searchedType = new AtomicReference<>();
+		AtomicReference<String> searchedQuery = new AtomicReference<>();
+
+		UiSnapshot snapshot = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			panel.setSearchHandler((type, query) ->
+			{
+				searchedType.set(type);
+				searchedQuery.set(query);
+			});
+
+			panel.showSearchNotFound("Item", "d scim");
+			UiSnapshot notFoundSnapshot = UiSnapshot.capture(panel);
+			clickButton(panel, "Item: Dragon scimitar");
+			panel.showEmpty();
+			UiSnapshot recentSnapshot = UiSnapshot.capture(panel);
+			return new UiSnapshot(
+				notFoundSnapshot.text + recentSnapshot.text,
+				notFoundSnapshot.toolTips + recentSnapshot.toolTips,
+				notFoundSnapshot.popupActions + recentSnapshot.popupActions,
+				notFoundSnapshot.equipmentImageComponentCount + recentSnapshot.equipmentImageComponentCount);
+		});
+
+		assertEquals("Item", searchedType.get());
+		assertEquals("Dragon scimitar", searchedQuery.get());
+		assertTrue(snapshot.text.contains("Open exact Wiki page"));
+		assertTrue(snapshot.text.contains("Item: Dragon scimitar"));
+		assertTrue(snapshot.text.contains("Item: d scim"));
+		assertTrue(snapshot.toolTips.contains("https://oldschool.runescape.wiki/w/d_scim"));
+	}
+
+	@Test
+	public void searchControlsFitRecentChipsWithoutLargeTrailingGap() throws Exception
+	{
+		int preferredHeight = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			panel.setSearchHandler((type, query) ->
+			{
+			});
+			for (String query : Arrays.asList("green dragon", "hespori", "obor", "rune platebody"))
+			{
+				panel.showSearchNotFound("NPC", query);
+				clickButton(panel, "NPC: " + query);
+			}
+			panel.showEmpty();
+			return panel.getComponent(0).getPreferredSize().height;
+		});
+
+		assertTrue("Search controls preferred height was " + preferredHeight, preferredHeight <= 160);
+	}
+
+	@Test
+	public void itemSearchNotFoundMessageWrapsWithinPanel() throws Exception
+	{
+		JTextArea message = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			panel.showSearchNotFound("Item", "green dragon");
+			return findTextAreaContaining(panel, "No item info was found for green dragon.");
+		});
+
+		assertTrue(message.getLineWrap());
+		assertTrue(message.getWrapStyleWord());
+		assertTrue(message.getPreferredSize().width <= PluginPanel.PANEL_WIDTH - 24);
+		assertTrue(message.getPreferredSize().height > 30);
+	}
+
+	@Test
+	public void clearSearchPreservesCurrentSearchTypeSelection() throws Exception
+	{
+		String selectedType = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			panel.showSearchNotFound("Item", "green dragon");
+			JComboBox<?> type = findComboBox(panel);
+			type.setSelectedItem("NPC");
+			panel.showEmpty();
+			return String.valueOf(findComboBox(panel).getSelectedItem());
+		});
+
+		assertEquals("NPC", selectedType);
+	}
+
+	@Test
+	public void itemAndNpcTabsSelectMatchingSearchType() throws Exception
+	{
+		String selectedTypes = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			panel.showSearchNotFound("NPC", "green dragon");
+
+			clickButton(panel, "Item");
+			String itemType = String.valueOf(findComboBox(panel).getSelectedItem());
+
+			clickButton(panel, "NPC");
+			String npcType = String.valueOf(findComboBox(panel).getSelectedItem());
+
+			return itemType + "," + npcType;
+		});
+
+		assertEquals("Item,NPC", selectedTypes);
+	}
+
+	@Test
+	public void itemSearchResultResetsScrollPositionToTop() throws Exception
+	{
+		AtomicReference<JScrollPane> scrollPane = new AtomicReference<>();
+
+		onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			JScrollPane pane = new JScrollPane(panel);
+			pane.setSize(new Dimension(PluginPanel.PANEL_WIDTH, 120));
+			panel.showItemInfo(scrollableItem("Rune platebody"), null, null, null);
+			pane.doLayout();
+			panel.doLayout();
+			pane.getViewport().setViewPosition(new Point(0, 300));
+			assertTrue(pane.getViewport().getViewPosition().y > 0);
+
+			panel.showItemInfo(scrollableItem("Rune platelegs"), null, null, null);
+			scrollPane.set(pane);
+			return null;
+		});
+		onEdt(() -> null);
+
+		int y = onEdt(() -> scrollPane.get().getViewport().getViewPosition().y);
+
+		assertEquals(0, y);
+	}
+
 	@Test
 	public void redactsEquipmentDetailsInPvpAreas() throws Exception
 	{
@@ -333,6 +482,8 @@ public class InspectPanelTest
 			ItemInspectInfo item = ItemInspectInfo.builder()
 				.itemId(1079)
 				.displayName("Rune platelegs")
+				.examine("A pair of platelegs made from runite.")
+				.defenceSlash("+51")
 				.sourceSummary("Skilling, Quests")
 				.sourcePlan(Arrays.asList(
 					new ItemSource(
@@ -356,6 +507,8 @@ public class InspectPanelTest
 		assertTrue(snapshot.text.contains("They can be created with level 99 Smithing and 3 runite bars."));
 		assertTrue(snapshot.text.contains("Quests"));
 		assertTrue(snapshot.text.contains("It requires 40 Defence and completion of Dragon Slayer I to equip."));
+		assertTrue(snapshot.text.indexOf("Defence bonuses") < snapshot.text.indexOf("Sources"));
+		assertTrue(snapshot.text.indexOf("Sources") < snapshot.text.indexOf("Examine"));
 		assertFalse(snapshot.text.contains("How to get"));
 		assertFalse(snapshot.text.contains("Unlock notes"));
 	}
@@ -566,6 +719,79 @@ public class InspectPanelTest
 			}
 		}
 		return null;
+	}
+
+	private static JTextArea findTextAreaContaining(Component root, String text)
+	{
+		Deque<Component> components = new ArrayDeque<>();
+		components.add(root);
+		while (!components.isEmpty())
+		{
+			Component component = components.removeFirst();
+			if (component instanceof JTextArea && ((JTextArea) component).getText().contains(text))
+			{
+				return (JTextArea) component;
+			}
+			if (component instanceof Container)
+			{
+				Collections.addAll(components, ((Container) component).getComponents());
+			}
+		}
+		throw new AssertionError("Text area not found: " + text);
+	}
+
+	private static JComboBox<?> findComboBox(Component root)
+	{
+		Deque<Component> components = new ArrayDeque<>();
+		components.add(root);
+		while (!components.isEmpty())
+		{
+			Component component = components.removeFirst();
+			if (component instanceof JComboBox)
+			{
+				return (JComboBox<?>) component;
+			}
+			if (component instanceof Container)
+			{
+				Collections.addAll(components, ((Container) component).getComponents());
+			}
+		}
+		throw new AssertionError("Combo box not found");
+	}
+
+	private static ItemInspectInfo scrollableItem(String name)
+	{
+		return ItemInspectInfo.builder()
+			.itemId(1079)
+			.displayName(name)
+			.members("Yes")
+			.tradeable("Yes")
+			.equipable("Yes")
+			.stackable("No")
+			.noteable("Yes")
+			.weight("9.071 kg")
+			.slot("Legs")
+			.attackSpeed("4 ticks")
+			.attackRange("1")
+			.attackStab("+1")
+			.attackSlash("+2")
+			.attackCrush("+3")
+			.attackMagic("-21")
+			.attackRanged("-7")
+			.defenceStab("+51")
+			.defenceSlash("+49")
+			.defenceCrush("+47")
+			.defenceMagic("-4")
+			.defenceRanged("+48")
+			.strength("+1")
+			.prayer("+1")
+			.questRequirements("Dragon Slayer I")
+			.sourcePlan(Collections.singletonList(new ItemSource(
+				"Skilling",
+				Collections.singletonList("They can be created with level 99 Smithing and 3 runite bars."),
+				Collections.singletonList(new ItemSourceRequirement("Smithing", 99, "Skilling")))))
+			.examine("A pair of platelegs made from runite.")
+			.build();
 	}
 
 	private static int countOccurrences(String value, String needle)

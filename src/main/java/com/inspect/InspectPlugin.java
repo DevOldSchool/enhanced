@@ -4,11 +4,10 @@ import com.inspect.item.ItemInspectInfo;
 import com.inspect.item.ItemPriceSummary;
 import com.inspect.item.ItemRequirementSummary;
 import com.inspect.item.ItemInspectService;
-import com.inspect.item.ItemSource;
-import com.inspect.item.ItemSourceRequirement;
 import com.inspect.inspect.InspectPanel;
 import com.inspect.inspect.PinnedInspectState;
 import com.inspect.inspect.RecentInspectEntry;
+import com.inspect.inspect.SearchQueryNormalizer;
 import com.inspect.npc.BankEquipmentOverlay;
 import com.inspect.npc.BankEquipmentRecommendationService;
 import com.inspect.npc.EquipmentRecommendation;
@@ -896,7 +895,7 @@ public class InspectPlugin extends Plugin
 
 	private void searchInspect(String type, String query)
 	{
-		String resolvedQuery = query == null ? "" : query.trim();
+		String resolvedQuery = SearchQueryNormalizer.normalize(type, query);
 		if (!config.enableWikiLookups())
 		{
 			SwingUtilities.invokeLater(() -> inspectPanel.showSearchDisabled("Enable OSRS Wiki lookups in the Inspect config to search the OSRS Wiki from this panel."));
@@ -909,10 +908,6 @@ public class InspectPlugin extends Plugin
 			return;
 		}
 
-		if (!"NPC".equals(type))
-		{
-			resolvedQuery = searchAlias(resolvedQuery);
-		}
 		final String lookupQuery = resolvedQuery;
 		if ("Item".equals(type))
 		{
@@ -948,113 +943,6 @@ public class InspectPlugin extends Plugin
 			lookupQuery,
 			snapshotEquippedItems(),
 			true));
-	}
-
-	private static String searchAlias(String query)
-	{
-		if (query == null)
-		{
-			return "";
-		}
-
-		String trimmed = query.trim();
-		switch (trimmed.toLowerCase(Locale.ENGLISH))
-		{
-			case "d scim":
-			case "d scimmy":
-				return "Dragon scimitar";
-			case "whip":
-				return "Abyssal whip";
-			case "trident":
-				return "Trident of the seas";
-			case "bp":
-			case "blowpipe":
-				return "Toxic blowpipe";
-			case "occult":
-				return "Occult necklace";
-			default:
-				return expandSearchAliases(trimmed);
-		}
-	}
-
-	private static String expandSearchAliases(String query)
-	{
-		String[] tokens = query.split("\\s+");
-		for (int i = 0; i < tokens.length; i++)
-		{
-			tokens[i] = expandSearchAliasToken(tokens[i]);
-		}
-		return String.join(" ", tokens);
-	}
-
-	private static String expandSearchAliasToken(String token)
-	{
-		StringBuilder suffix = new StringBuilder();
-		String word = token;
-		while (!word.isEmpty() && !Character.isLetterOrDigit(word.charAt(word.length() - 1)))
-		{
-			suffix.insert(0, word.charAt(word.length() - 1));
-			word = word.substring(0, word.length() - 1);
-		}
-
-		String expanded;
-		switch (word.toLowerCase(Locale.ENGLISH))
-		{
-			case "mith":
-				expanded = "mithril";
-				break;
-			case "addy":
-			case "addam":
-				expanded = "adamant";
-				break;
-			case "rune":
-				expanded = "rune";
-				break;
-			case "d":
-			case "drag":
-				expanded = "dragon";
-				break;
-			case "blk":
-				expanded = "black";
-				break;
-			case "obby":
-				expanded = "obsidian";
-				break;
-			case "anc":
-				expanded = "ancient";
-				break;
-			case "arma":
-				expanded = "armadyl";
-				break;
-			case "bcp":
-				expanded = "Bandos chestplate";
-				break;
-			case "tassets":
-				expanded = "Bandos tassets";
-				break;
-			case "dh":
-				expanded = "Dharok's";
-				break;
-			case "ahrim":
-				expanded = "Ahrim's";
-				break;
-			case "karil":
-				expanded = "Karil's";
-				break;
-			case "verac":
-				expanded = "Verac's";
-				break;
-			case "torag":
-				expanded = "Torag's";
-				break;
-			case "guthan":
-				expanded = "Guthan's";
-				break;
-			default:
-				expanded = word;
-				break;
-		}
-		return expanded + suffix;
 	}
 
 	private void renderItemLookup(CompletableFuture<ItemInspectInfo> lookup, String itemName, Map<EquipmentInventorySlot, EquippedItem> equippedItems, boolean search)
@@ -1290,9 +1178,87 @@ public class InspectPlugin extends Plugin
 		List<NpcItemRequirementStatus> statuses = new ArrayList<>();
 		for (NpcItemRequirement requirement : info.getItemRequirements())
 		{
-			statuses.add(new NpcItemRequirementStatus(requirement, npcItemRequirementAlternativeStatuses(requirement, carriedItemNames)));
+			NpcItemRequirement resolvedRequirement = resolvedNpcItemRequirement(requirement);
+			if (resolvedRequirement == null)
+			{
+				continue;
+			}
+			statuses.add(new NpcItemRequirementStatus(
+				resolvedRequirement,
+				npcItemRequirementAlternativeStatuses(resolvedRequirement, carriedItemNames)));
 		}
 		return statuses;
+	}
+
+	private NpcItemRequirement resolvedNpcItemRequirement(NpcItemRequirement requirement)
+	{
+		if (requirement == null || requirement.getAlternatives() == null || requirement.getAlternatives().isEmpty())
+		{
+			return null;
+		}
+
+		List<String> alternatives = new ArrayList<>();
+		for (String alternative : requirement.getAlternatives())
+		{
+			String itemName = requiredItemName(alternative);
+			if (itemName != null && !containsIgnoreCase(alternatives, itemName))
+			{
+				alternatives.add(itemName);
+			}
+		}
+		return npcItemRequirementWithAlternatives(alternatives);
+	}
+
+	static NpcItemRequirement npcItemRequirementWithAlternatives(List<String> alternatives)
+	{
+		if (alternatives == null || alternatives.isEmpty())
+		{
+			return null;
+		}
+		return new NpcItemRequirement(String.join(" or ", alternatives), alternatives);
+	}
+
+	private String requiredItemName(String itemName)
+	{
+		if (itemManager == null || itemName == null || itemName.isEmpty())
+		{
+			return null;
+		}
+
+		int fallbackItemId = dropItemIdFallback(itemName);
+		if (fallbackItemId > 0)
+		{
+			ItemComposition composition = itemManager.getItemComposition(fallbackItemId);
+			return composition == null ? itemName : composition.getName();
+		}
+
+		List<ItemPrice> matches = itemManager.search(itemName);
+		if (matches == null || matches.isEmpty())
+		{
+			return null;
+		}
+
+		String normalizedItemName = normalizeItemName(itemName);
+		for (ItemPrice match : matches)
+		{
+			if (normalizedItemName.equals(normalizeItemName(match.getName())))
+			{
+				return match.getName();
+			}
+		}
+		return null;
+	}
+
+	private static boolean containsIgnoreCase(List<String> values, String value)
+	{
+		for (String existing : values)
+		{
+			if (existing.equalsIgnoreCase(value))
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private Map<String, Integer> npcDropItemIds(NpcCombatInfo info)
@@ -1868,7 +1834,7 @@ public class InspectPlugin extends Plugin
 		return levels;
 	}
 
-	private static ItemRequirementSummary itemRequirementSummary(ItemInspectInfo info, Map<Skill, Integer> skillLevels)
+	static ItemRequirementSummary itemRequirementSummary(ItemInspectInfo info, Map<Skill, Integer> skillLevels)
 	{
 		if (info == null)
 		{
@@ -1877,24 +1843,14 @@ public class InspectPlugin extends Plugin
 
 		List<String> met = new ArrayList<>();
 		List<String> missing = new ArrayList<>();
-		Set<String> itemRequirementKeys = new HashSet<>();
 		addRequirementCheck(met, missing, "Attack", info.getRequirementAttack(), Skill.ATTACK, skillLevels);
-		addItemRequirementKey(itemRequirementKeys, "Attack", info.getRequirementAttack());
 		addRequirementCheck(met, missing, "Strength", info.getRequirementStrength(), Skill.STRENGTH, skillLevels);
-		addItemRequirementKey(itemRequirementKeys, "Strength", info.getRequirementStrength());
 		addRequirementCheck(met, missing, "Defence", info.getRequirementDefence(), Skill.DEFENCE, skillLevels);
-		addItemRequirementKey(itemRequirementKeys, "Defence", info.getRequirementDefence());
 		addRequirementCheck(met, missing, "Ranged", info.getRequirementRanged(), Skill.RANGED, skillLevels);
-		addItemRequirementKey(itemRequirementKeys, "Ranged", info.getRequirementRanged());
 		addRequirementCheck(met, missing, "Magic", info.getRequirementMagic(), Skill.MAGIC, skillLevels);
-		addItemRequirementKey(itemRequirementKeys, "Magic", info.getRequirementMagic());
 		addRequirementCheck(met, missing, "Prayer", info.getRequirementPrayer(), Skill.PRAYER, skillLevels);
-		addItemRequirementKey(itemRequirementKeys, "Prayer", info.getRequirementPrayer());
 		addRequirementCheck(met, missing, "Hitpoints", info.getRequirementHitpoints(), Skill.HITPOINTS, skillLevels);
-		addItemRequirementKey(itemRequirementKeys, "Hitpoints", info.getRequirementHitpoints());
 		addRequirementCheck(met, missing, "Slayer", info.getRequirementSlayer(), Skill.SLAYER, skillLevels);
-		addItemRequirementKey(itemRequirementKeys, "Slayer", info.getRequirementSlayer());
-		addSourceRequirementChecks(met, missing, info.getSourcePlan(), skillLevels, itemRequirementKeys);
 		return new ItemRequirementSummary(met, missing);
 	}
 
@@ -1952,88 +1908,6 @@ public class InspectPlugin extends Plugin
 		}
 
 		missing.add(summary);
-	}
-
-	private static void addItemRequirementKey(Set<String> keys, String label, String requirement)
-	{
-		Double required = requirementLevel(requirement);
-		if (required != null)
-		{
-			keys.add(label + ":" + required.intValue());
-		}
-	}
-
-	private static void addSourceRequirementChecks(List<String> met, List<String> missing, List<ItemSource> sources,
-		Map<Skill, Integer> skillLevels, Set<String> itemRequirementKeys)
-	{
-		if (sources == null || sources.isEmpty())
-		{
-			return;
-		}
-
-		Set<String> seen = new HashSet<>();
-		for (ItemSource source : sources)
-		{
-			if (source.getRequirements() == null)
-			{
-				continue;
-			}
-
-			for (ItemSourceRequirement requirement : source.getRequirements())
-			{
-				Skill skill = skillFromName(requirement.getSkillName());
-				if (skill == null)
-				{
-					continue;
-				}
-
-				if (itemRequirementKeys.contains(requirement.getSkillName() + ":" + requirement.getLevel()))
-				{
-					continue;
-				}
-
-				String key = source.getCategory() + ":" + requirement.getSkillName() + ":" + requirement.getLevel();
-				if (!seen.add(key))
-				{
-					continue;
-				}
-
-				int current = skillLevels.getOrDefault(skill, 1);
-				String summary = requirement.getSkillName() + " " + requirement.getLevel()
-					+ " for " + source.getCategory().toLowerCase(Locale.ENGLISH)
-					+ " (" + current + ")";
-				if (current >= requirement.getLevel())
-				{
-					met.add(summary);
-					continue;
-				}
-
-				missing.add(summary);
-			}
-		}
-	}
-
-	private static Skill skillFromName(String skillName)
-	{
-		if (skillName == null || skillName.isEmpty())
-		{
-			return null;
-		}
-
-		String enumName = skillName.trim().toUpperCase(Locale.ENGLISH);
-		if ("RUNECRAFTING".equals(enumName))
-		{
-			enumName = "RUNECRAFT";
-		}
-
-		try
-		{
-			return Skill.valueOf(enumName);
-		}
-		catch (IllegalArgumentException ex)
-		{
-			return null;
-		}
 	}
 
 	private static Double requirementLevel(String requirement)
