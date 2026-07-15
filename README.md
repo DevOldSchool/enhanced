@@ -14,7 +14,10 @@ Most features are backed by OSRS Wiki data. Enable OSRS Wiki lookups once in the
 - **Bank highlights**: highlight recommended bank items with rank indicators.
 - **Item prices**: show GE price, high alch, low alch, and high-alch profit or loss.
 - **Requirement summaries**: show item skill requirements and missing levels where available.
-- **Slayer and drop summaries**: show compact NPC Slayer and drop-table information when available from the wiki.
+- **NPC required items**: show item requirements for monsters that need a finishing item, with inventory/equipment readiness checks.
+- **Drop filters**: filter NPC drops into useful categories like valuable, rare, Slayer-only, clue, Ironman, alchable, and upgrade materials.
+- **Compare tray**: save an NPC, item, or player inspection as the current comparison and reopen it from the sidebar.
+- **Slayer and drop summaries**: show NPC Slayer details, clickable Slayer master links, and drop-table information when available from the wiki.
 
 ## Item Inspect
 
@@ -24,7 +27,13 @@ Item inspect shows wiki-backed item details, prices, requirements, source tags, 
 
 ## NPC Inspect
 
-NPC inspect shows combat stats, weakness summaries, Slayer details, drop summaries, a lightweight kill checklist, and equipment recommendations.
+NPC inspect shows combat stats, weakness summaries, Slayer details, required items, drop filters, a lightweight kill checklist, and equipment recommendations.
+
+Required items are grouped by condition. For example, gargoyles show the valid finishing items as alternatives, with each row marked as missing, in inventory, or equipped. The check refreshes when inventory or equipment changes.
+
+Drop filters show one item per row, with item icons where RuneLite can resolve them. Rows with resolved item IDs can be right-clicked and inspected directly. The current filters are valuable, rare, Slayer-only, clue, Ironman, alchable, and upgrade.
+
+Slayer master tags open their OSRS Wiki pages.
 
 ![NPC inspect example](images/npc.png)
 
@@ -39,6 +48,10 @@ Player equipment inspect does not upload, store, or crowdsource player gear.
 Player inspect is disabled in PVP areas.
 
 ![Player inspect in PVP example](images/player-pvp.png)
+
+## Compare
+
+The Compare tray keeps one pinned NPC, item, and player inspection. Pinning an inspection makes future inspections show a compact comparison against the saved entry. Pinned rows are clickable, so saved comparisons can be reopened without searching again.
 
 ## Recent Inspections
 
@@ -60,6 +73,8 @@ The Recent tab keeps short clickable lists for returning to item, NPC, and playe
 ## Data And Privacy
 
 Enhanced uses OSRS Wiki lookups only when the wiki lookup config is enabled. Wiki responses are cached under the RuneLite directory for the configured cache duration.
+
+NPC and item search results are served from the local Inspect cache when a matching cached entry is still fresh.
 
 Player inspect uses locally visible client data only. It does not expose player information over HTTP.
 
