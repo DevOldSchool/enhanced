@@ -147,7 +147,10 @@ public class NpcInspectParserTest
 			+ "{{DropsLine|name=Adamant platebody|rarity=Rare}}\n"
 			+ "{{DropsLine|name=Clue scroll (hard)|rarity=Rare}}\n"
 			+ "{{DropsLine|name=Grimy ranarr weed|rarity=Uncommon}}\n"
-			+ "{{DropsLine|name=Law rune|rarity=Common}}\n";
+			+ "{{DropsLine|name=Law rune|rarity=Common}}\n"
+			+ "=== Slayer task ===\n"
+			+ "{{DropsLine|name=Brimstone key|rarity=1/100}}\n"
+			+ "{{DropsLine|name=Abyssal head|rarity=Very rare}}\n";
 
 		NpcCombatInfo info = parser.parse(415, "Abyssal demon", new NpcWikiLookup("Abyssal_demon", null, "https://wiki"), wikitext);
 
@@ -156,11 +159,82 @@ public class NpcInspectParserTest
 		assertEquals("Duradel, Nieve, Konar quo Maten", info.getAssignedBy());
 		assertEquals("No", info.getTaskOnly());
 		assertEquals("Greater abyssal demon", info.getSuperiorVariant());
-		assertEquals("Adamant platebody, Clue scroll (hard)", info.getRareDrops());
+		assertEquals("Abyssal whip, Adamant platebody, Clue scroll (hard), Abyssal head", info.getRareDrops());
+		assertEquals("Abyssal whip, Adamant platebody, Clue scroll (hard), Brimstone key, Abyssal head", info.getValuableDrops());
+		assertEquals("Brimstone key, Abyssal head", info.getSlayerOnlyDrops());
 		assertEquals("Adamant platebody", info.getAlchableDrops());
 		assertEquals("Clue scroll (hard)", info.getClueDrops());
+		assertEquals("Grimy ranarr weed, Law rune, Abyssal head", info.getIronmanDrops());
+		assertEquals("Abyssal head", info.getUpgradeDrops());
 		assertEquals("Grimy ranarr weed", info.getResourceDrops());
 		assertEquals("Law rune", info.getSupplyDrops());
+	}
+
+	@Test
+	public void parsesNpcItemRequirementsFromWikiLinks()
+	{
+		String wikitext = "{{Infobox Monster\n"
+			+ "|name = Gargoyle\n"
+			+ "|combat = 111\n"
+			+ "|id = 412\n"
+			+ "}}\n"
+			+ "Players must use a [[Rock hammer]] or [[Rock thrownhammer]] to finish killing gargoyles.\n"
+			+ "The [[Gargoyle Smasher]] unlock can automatically finish killing gargoyles.\n";
+
+		NpcCombatInfo info = parser.parse(412, "Gargoyle", new NpcWikiLookup("Gargoyle", null, "https://wiki"), wikitext);
+
+		assertEquals(1, info.getItemRequirements().size());
+		assertEquals("Rock hammer or Rock thrownhammer or Granite maul", info.getItemRequirements().get(0).getLabel());
+		assertEquals("Rock hammer", info.getItemRequirements().get(0).getAlternatives().get(0));
+		assertEquals("Rock thrownhammer", info.getItemRequirements().get(0).getAlternatives().get(1));
+		assertEquals("Granite maul", info.getItemRequirements().get(0).getAlternatives().get(2));
+	}
+
+	@Test
+	public void parsesNpcItemRequirementsFromItemTemplates()
+	{
+		String wikitext = "{{Infobox Monster\n"
+			+ "|name = Rockslug\n"
+			+ "|combat = 29\n"
+			+ "|id = 422\n"
+			+ "}}\n"
+			+ "A {{plink|Bag of salt}} is required to finish killing rockslugs.\n";
+
+		NpcCombatInfo info = parser.parse(422, "Rockslug", new NpcWikiLookup("Rockslug", null, "https://wiki"), wikitext);
+
+		assertEquals(1, info.getItemRequirements().size());
+		assertEquals("Bag of salt", info.getItemRequirements().get(0).getLabel());
+		assertEquals("Bag of salt", info.getItemRequirements().get(0).getAlternatives().get(0));
+	}
+
+	@Test
+	public void ignoresNonItemUnlocksWhenParsingNpcItemRequirements()
+	{
+		String wikitext = "{{Infobox Monster\n"
+			+ "|name = Gargoyle\n"
+			+ "|combat = 111\n"
+			+ "|id = 412\n"
+			+ "}}\n"
+			+ "Players must unlock [[Gargoyle Smasher]] to finish killing gargoyles automatically.\n";
+
+		NpcCombatInfo info = parser.parse(412, "Gargoyle", new NpcWikiLookup("Gargoyle", null, "https://wiki"), wikitext);
+
+		assertEquals(0, info.getItemRequirements().size());
+	}
+
+	@Test
+	public void ignoresSkillRequirementsWhenParsingNpcItemRequirements()
+	{
+		String wikitext = "{{Infobox Monster\n"
+			+ "|name = Abyssal demon\n"
+			+ "|combat = 124\n"
+			+ "|id = 415\n"
+			+ "}}\n"
+			+ "Players require 85 Slayer to kill abyssal demons.\n";
+
+		NpcCombatInfo info = parser.parse(415, "Abyssal demon", new NpcWikiLookup("Abyssal_demon", null, "https://wiki"), wikitext);
+
+		assertEquals(0, info.getItemRequirements().size());
 	}
 
 	@Test

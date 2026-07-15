@@ -5,27 +5,33 @@ import com.inspect.item.ItemPriceSummary;
 import com.inspect.item.ItemRequirementSummary;
 import com.inspect.item.ItemInspectService;
 import com.inspect.inspect.InspectPanel;
+import com.inspect.inspect.PinnedInspectState;
+import com.inspect.inspect.RecentInspectEntry;
 import com.inspect.npc.BankEquipmentOverlay;
 import com.inspect.npc.BankEquipmentRecommendationService;
 import com.inspect.npc.EquipmentRecommendation;
 import com.inspect.npc.NpcCombatInfo;
+import com.inspect.npc.NpcItemRequirement;
+import com.inspect.npc.NpcItemRequirementAlternativeStatus;
+import com.inspect.npc.NpcItemRequirementStatus;
 import com.inspect.npc.NpcInspectService;
 import com.inspect.player.PlayerEquipmentComparison;
 import com.inspect.player.PlayerEquipmentItem;
 import com.inspect.player.PlayerInspectAnalysis;
-import com.inspect.inspect.RecentInspectEntry;
 import com.google.inject.Provides;
 import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
-import java.util.Deque;
-import java.util.EnumMap;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.ArrayDeque;
+import java.util.Collections;
+import java.util.Deque;
+import java.util.EnumMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -47,10 +53,12 @@ import net.runelite.api.PlayerComposition;
 import net.runelite.api.Skill;
 import net.runelite.api.WorldType;
 import net.runelite.api.events.ClientTick;
+import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.MenuEntryAdded;
 import net.runelite.api.events.MenuOpened;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.InventoryID;
+import net.runelite.api.gameval.ItemID;
 import net.runelite.api.gameval.VarbitID;
 import net.runelite.api.kit.KitType;
 import net.runelite.api.widgets.Widget;
@@ -66,6 +74,7 @@ import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.util.Text;
+import net.runelite.http.api.item.ItemPrice;
 
 @Slf4j
 @PluginDescriptor(
@@ -115,7 +124,11 @@ public class InspectPlugin extends Plugin
 	private MenuMarker lastNpcInspectMenu = MenuMarker.empty();
 	private MenuMarker lastItemInspectMenu = MenuMarker.empty();
 	private MenuMarker lastPlayerInspectMenu = MenuMarker.empty();
-	private ItemInspectInfo manualCompareItem;
+	private NpcCombatInfo currentNpcInfo;
+	private EquipmentRecommendation currentNpcRecommendation;
+	private String currentNpcRecommendationMessage;
+	private Map<String, Integer> currentNpcDropItemIds = Collections.emptyMap();
+	private PinnedInspectState pinnedInspectState = PinnedInspectState.empty();
 	private final Set<String> playerInspectTargetsThisTick = new HashSet<>();
 	private final Deque<String> recentNpcInspects = new ArrayDeque<>();
 	private final Deque<String> recentPlayerInspects = new ArrayDeque<>();
@@ -125,30 +138,63 @@ public class InspectPlugin extends Plugin
 	protected void startUp()
 	{
 		inspectPanel = injector.getInstance(InspectPanel.class);
+		inspectPanel.setPinnedInspects(pinnedInspectState);
 		inspectPanel.setSearchHandler(this::searchInspect);
 		inspectPanel.setItemInspectHandler(this::inspectPlayerEquipmentItem);
-		inspectPanel.setManualCompareHandler(new InspectPanel.ManualCompareHandler()
+		inspectPanel.setPinnedInspectHandler(new InspectPanel.PinnedInspectHandler()
 		{
 			@Override
-			public void setCompareItem(ItemInspectInfo info)
+			public void pinNpc(NpcCombatInfo info)
 			{
-				manualCompareItem = info;
-				clientThread.invokeLater(() ->
-				{
-					Map<Skill, Integer> skillLevels = snapshotSkillLevels();
-					SwingUtilities.invokeLater(() -> inspectPanel.showItemInfo(info, null, manualCompareItem, itemRequirementSummary(info, skillLevels), itemPriceSummary(info)));
-				});
+				updatePinnedInspects(pinnedInspectState.withNpc(info));
 			}
 
 			@Override
-			public void clearCompareItem(ItemInspectInfo currentInfo)
+			public void pinItem(ItemInspectInfo info)
 			{
-				manualCompareItem = null;
-				clientThread.invokeLater(() ->
-				{
-					Map<Skill, Integer> skillLevels = snapshotSkillLevels();
-					SwingUtilities.invokeLater(() -> inspectPanel.showItemInfo(currentInfo, null, null, itemRequirementSummary(currentInfo, skillLevels), itemPriceSummary(currentInfo)));
-				});
+				updatePinnedInspects(pinnedInspectState.withItem(info));
+			}
+
+			@Override
+			public void pinPlayer(String playerName, int combatLevel, List<PlayerEquipmentItem> equipment)
+			{
+				updatePinnedInspects(pinnedInspectState.withPlayer(playerName, combatLevel, equipment));
+			}
+
+			@Override
+			public void openNpc(NpcCombatInfo info)
+			{
+				showNpcInfoWithLocalChecks(info, true);
+			}
+
+			@Override
+			public void openItem(ItemInspectInfo info)
+			{
+				showPinnedItem(info);
+			}
+
+			@Override
+			public void openPlayer(String playerName, int combatLevel, List<PlayerEquipmentItem> equipment)
+			{
+				showPinnedPlayer(playerName, combatLevel, equipment);
+			}
+
+			@Override
+			public void clearNpc()
+			{
+				updatePinnedInspects(pinnedInspectState.withoutNpc());
+			}
+
+			@Override
+			public void clearItem()
+			{
+				updatePinnedInspects(pinnedInspectState.withoutItem());
+			}
+
+			@Override
+			public void clearPlayer()
+			{
+				updatePinnedInspects(pinnedInspectState.withoutPlayer());
 			}
 		});
 		inspectPanel.setCacheManagementHandler(new InspectPanel.CacheManagementHandler()
@@ -233,8 +279,75 @@ public class InspectPlugin extends Plugin
 		itemInspectService.shutDown();
 		inspectPanel = null;
 		inspectNavButton = null;
+		currentNpcInfo = null;
+		currentNpcRecommendation = null;
+		currentNpcRecommendationMessage = null;
+		currentNpcDropItemIds = Collections.emptyMap();
+		pinnedInspectState = PinnedInspectState.empty();
 		resetInspectMenuMarker();
 		log.debug("Inspect plugin stopped");
+	}
+
+	private void updatePinnedInspects(PinnedInspectState state)
+	{
+		pinnedInspectState = state == null ? PinnedInspectState.empty() : state;
+		if (inspectPanel != null)
+		{
+			inspectPanel.setPinnedInspects(pinnedInspectState);
+			inspectPanel.refreshActiveView();
+		}
+	}
+
+	private void showPinnedItem(ItemInspectInfo info)
+	{
+		if (info == null)
+		{
+			return;
+		}
+
+		clientThread.invokeLater(() ->
+		{
+			Map<Skill, Integer> skillLevels = snapshotSkillLevels();
+			ItemRequirementSummary requirementSummary = itemRequirementSummary(info, skillLevels);
+			ItemPriceSummary priceSummary = itemPriceSummary(info);
+			SwingUtilities.invokeLater(() ->
+			{
+				addRecentItem(recentItemInspects, info.getItemId(), info.getDisplayName());
+				bankEquipmentOverlay.clear();
+				inspectPanel.setRecentItems(recentItems());
+				inspectPanel.showItemInfo(info, null, requirementSummary, priceSummary);
+			});
+		});
+	}
+
+	private void showPinnedPlayer(String playerName, int combatLevel, List<PlayerEquipmentItem> equipment)
+	{
+		if (playerName == null || equipment == null)
+		{
+			return;
+		}
+
+		clientThread.invokeLater(() ->
+		{
+			List<PlayerEquipmentItem> equipmentSnapshot = new ArrayList<>(equipment);
+			Map<String, PlayerEquipmentItem> localEquipment = localPlayerEquipmentBySlot();
+			boolean pvpBlocked = isPvpEquipmentInspectBlocked();
+			PlayerInspectAnalysis loadingAnalysis = pvpBlocked
+				? null
+				: PlayerInspectAnalysis.loading(formatCoins(totalVisibleValue(equipmentSnapshot)));
+			addRecent(recentPlayerInspects, playerName);
+			bankEquipmentOverlay.clear();
+			SwingUtilities.invokeLater(() -> inspectPanel.showPlayerEquipment(
+				playerName,
+				combatLevel,
+				equipmentSnapshot,
+				loadingAnalysis,
+				pvpBlocked,
+				recentPlayers(),
+				recentItems()
+			));
+			loadPlayerInspectAnalysis(playerName, combatLevel, equipmentSnapshot, localEquipment, pvpBlocked);
+		});
 	}
 
 	@Subscribe
@@ -251,6 +364,17 @@ public class InspectPlugin extends Plugin
 	public void onClientTick(ClientTick event)
 	{
 		resetInspectMenuMarker();
+	}
+
+	@Subscribe
+	public void onItemContainerChanged(ItemContainerChanged event)
+	{
+		if (event.getContainerId() != InventoryID.INV && event.getContainerId() != InventoryID.WORN)
+		{
+			return;
+		}
+
+		refreshCurrentNpcItemRequirements();
 	}
 
 	@Subscribe
@@ -557,8 +681,7 @@ public class InspectPlugin extends Plugin
 					return;
 				}
 
-				bankEquipmentOverlay.clear();
-				showNpcInfo((NpcCombatInfo) info);
+				showNpcInfoWithLocalChecks((NpcCombatInfo) info, true);
 			}));
 	}
 
@@ -768,7 +891,7 @@ public class InspectPlugin extends Plugin
 		SwingUtilities.invokeLater(() -> inspectPanel.showSearchLoading(type, lookupQuery));
 		if ("NPC".equals(type))
 		{
-			npcInspectService.search(lookupQuery)
+			npcInspectService.search(lookupQuery, config.npcInspectCacheTtlDays())
 				.whenComplete((info, throwable) -> SwingUtilities.invokeLater(() ->
 				{
 					if (throwable != null)
@@ -785,12 +908,16 @@ public class InspectPlugin extends Plugin
 					}
 
 					addRecent(recentNpcInspects, info.getDisplayName() == null ? lookupQuery : info.getDisplayName());
-					showNpcInfo(info);
+					showNpcInfoWithLocalChecks(info, false);
 				}));
 			return;
 		}
 
-		clientThread.invokeLater(() -> renderItemLookup(itemInspectService.search(lookupQuery), lookupQuery, snapshotEquippedItems(), true));
+		clientThread.invokeLater(() -> renderItemLookup(
+			itemInspectService.search(lookupQuery, config.npcInspectCacheTtlDays()),
+			lookupQuery,
+			snapshotEquippedItems(),
+			true));
 	}
 
 	private static String searchAlias(String query)
@@ -970,7 +1097,7 @@ public class InspectPlugin extends Plugin
 							result.info.getDisplayName() == null ? itemName : result.info.getDisplayName());
 						bankEquipmentOverlay.clear();
 						inspectPanel.setRecentItems(recentItems());
-						inspectPanel.showItemInfo(result.info, result.equippedInfo, manualCompareItem, requirementSummary, priceSummary);
+						inspectPanel.showItemInfo(result.info, result.equippedInfo, requirementSummary, priceSummary);
 					});
 				});
 			});
@@ -980,27 +1107,29 @@ public class InspectPlugin extends Plugin
 	{
 		if (!config.enableWikiLookups())
 		{
-			SwingUtilities.invokeLater(() -> inspectPanel.showInfo(info, EquipmentRecommendation.preview(info), "Enable OSRS Wiki lookups first."));
+			SwingUtilities.invokeLater(() -> showNpcInfo(info, EquipmentRecommendation.preview(info), "Enable OSRS Wiki lookups first.", Collections.emptyList()));
 			return;
 		}
 
 		if (!config.showEquipmentRecommendations())
 		{
-			SwingUtilities.invokeLater(() -> inspectPanel.showInfo(info, EquipmentRecommendation.preview(info), "Enable Equipment recommendations in the Enhanced config."));
+			SwingUtilities.invokeLater(() -> showNpcInfo(info, EquipmentRecommendation.preview(info), "Enable Equipment recommendations in the Enhanced config.", Collections.emptyList()));
 			return;
 		}
 
 		clientThread.invokeLater(() ->
 		{
+			List<NpcItemRequirementStatus> itemRequirementStatuses = npcItemRequirementStatuses(info);
+			Map<String, Integer> dropItemIds = npcDropItemIds(info);
 			Collection<BankEquipmentRecommendationService.BankItemCandidate> bankItems = snapshotBankEquipmentCandidates();
 			if (bankItems.isEmpty())
 			{
 				bankEquipmentOverlay.clear();
-				SwingUtilities.invokeLater(() -> inspectPanel.showInfo(info, EquipmentRecommendation.preview(info), "No bank or equipped gear found."));
+				SwingUtilities.invokeLater(() -> showNpcInfo(info, EquipmentRecommendation.preview(info), "No bank or equipped gear found.", itemRequirementStatuses, dropItemIds));
 				return;
 			}
 
-			SwingUtilities.invokeLater(() -> inspectPanel.showInfo(info, EquipmentRecommendation.preview(info), "Scanning bank and equipped gear..."));
+			SwingUtilities.invokeLater(() -> showNpcInfo(info, EquipmentRecommendation.preview(info), "Scanning bank and equipped gear...", itemRequirementStatuses, dropItemIds));
 			bankEquipmentRecommendationService.recommend(info, bankItems, config.npcInspectCacheTtlDays())
 				.whenComplete((recommendation, throwable) -> SwingUtilities.invokeLater(() ->
 				{
@@ -1008,21 +1137,21 @@ public class InspectPlugin extends Plugin
 					{
 						log.debug("Bank equipment recommendation failed for {}", info.getDisplayName(), throwable);
 						bankEquipmentOverlay.clear();
-						inspectPanel.showInfo(info, EquipmentRecommendation.preview(info), "Unable to load bank item stats.");
+						showNpcInfo(info, EquipmentRecommendation.preview(info), "Unable to load bank item stats.", itemRequirementStatuses, dropItemIds);
 						return;
 					}
 
 					if (recommendation == null || !recommendation.hasItems())
 					{
 						bankEquipmentOverlay.clear();
-						inspectPanel.showInfo(info, recommendation == null ? EquipmentRecommendation.preview(info) : recommendation, "No matching equipment found.");
+						showNpcInfo(info, recommendation == null ? EquipmentRecommendation.preview(info) : recommendation, "No matching equipment found.", itemRequirementStatuses, dropItemIds);
 						return;
 					}
 
 					bankEquipmentOverlay.setHighlightedItemRanks(recommendation.bankItemRanks());
-					inspectPanel.showInfo(info, recommendation, recommendation.bankItemRanks().isEmpty()
+					showNpcInfo(info, recommendation, recommendation.bankItemRanks().isEmpty()
 						? "Checked current equipment. Open your bank to highlight gear."
-						: "Ranked matching bank gear.");
+						: "Ranked matching bank gear.", itemRequirementStatuses, dropItemIds);
 				}));
 		});
 	}
@@ -1030,16 +1159,259 @@ public class InspectPlugin extends Plugin
 	private void clearRecommendedBankGear(NpcCombatInfo info)
 	{
 		bankEquipmentOverlay.clear();
-		SwingUtilities.invokeLater(() -> inspectPanel.showInfo(info, EquipmentRecommendation.preview(info), "Selection cleared."));
+		clientThread.invokeLater(() ->
+		{
+			List<NpcItemRequirementStatus> itemRequirementStatuses = npcItemRequirementStatuses(info);
+			Map<String, Integer> dropItemIds = npcDropItemIds(info);
+			SwingUtilities.invokeLater(() -> showNpcInfo(info, EquipmentRecommendation.preview(info), "Selection cleared.", itemRequirementStatuses, dropItemIds));
+		});
 	}
 
 	private void showNpcInfo(NpcCombatInfo info)
 	{
+		showNpcInfo(info, Collections.emptyList());
+	}
+
+	private void showNpcInfo(NpcCombatInfo info, List<NpcItemRequirementStatus> itemRequirementStatuses)
+	{
 		EquipmentRecommendation recommendation = config.showEquipmentRecommendations()
 			? EquipmentRecommendation.preview(info)
 			: null;
+		showNpcInfo(info, recommendation, null, itemRequirementStatuses, Collections.emptyMap());
+	}
+
+	private void showNpcInfo(NpcCombatInfo info, EquipmentRecommendation recommendation, String recommendationMessage,
+		List<NpcItemRequirementStatus> itemRequirementStatuses)
+	{
+		showNpcInfo(info, recommendation, recommendationMessage, itemRequirementStatuses, Collections.emptyMap());
+	}
+
+	private void showNpcInfo(NpcCombatInfo info, EquipmentRecommendation recommendation, String recommendationMessage,
+		List<NpcItemRequirementStatus> itemRequirementStatuses, Map<String, Integer> dropItemIds)
+	{
+		currentNpcInfo = info;
+		currentNpcRecommendation = recommendation;
+		currentNpcRecommendationMessage = recommendationMessage;
+		currentNpcDropItemIds = dropItemIds == null ? Collections.emptyMap() : new LinkedHashMap<>(dropItemIds);
 		inspectPanel.setRecentNpcs(recentNpcs());
-		inspectPanel.showInfo(info, recommendation, null);
+		inspectPanel.showInfo(info, recommendation, recommendationMessage, itemRequirementStatuses, currentNpcDropItemIds);
+	}
+
+	private void showNpcInfoWithLocalChecks(NpcCombatInfo info, boolean clearBankOverlay)
+	{
+		clientThread.invokeLater(() ->
+		{
+			List<NpcItemRequirementStatus> itemRequirementStatuses = npcItemRequirementStatuses(info);
+			Map<String, Integer> dropItemIds = npcDropItemIds(info);
+			SwingUtilities.invokeLater(() ->
+			{
+				if (clearBankOverlay)
+				{
+					bankEquipmentOverlay.clear();
+				}
+				EquipmentRecommendation recommendation = config.showEquipmentRecommendations()
+					? EquipmentRecommendation.preview(info)
+					: null;
+				showNpcInfo(info, recommendation, null, itemRequirementStatuses, dropItemIds);
+			});
+		});
+	}
+
+	private List<NpcItemRequirementStatus> npcItemRequirementStatuses(NpcCombatInfo info)
+	{
+		if (info == null || info.getItemRequirements() == null || info.getItemRequirements().isEmpty())
+		{
+			return Collections.emptyList();
+		}
+
+		Map<String, String> carriedItemNames = snapshotCarriedItemNames();
+		List<NpcItemRequirementStatus> statuses = new ArrayList<>();
+		for (NpcItemRequirement requirement : info.getItemRequirements())
+		{
+			statuses.add(new NpcItemRequirementStatus(requirement, npcItemRequirementAlternativeStatuses(requirement, carriedItemNames)));
+		}
+		return statuses;
+	}
+
+	private Map<String, Integer> npcDropItemIds(NpcCombatInfo info)
+	{
+		Map<String, Integer> itemIds = new LinkedHashMap<>();
+		if (info == null)
+		{
+			return itemIds;
+		}
+
+		addDropItemIds(itemIds, info.getValuableDrops());
+		addDropItemIds(itemIds, info.getRareDrops());
+		addDropItemIds(itemIds, info.getSlayerOnlyDrops());
+		addDropItemIds(itemIds, info.getClueDrops());
+		addDropItemIds(itemIds, info.getIronmanDrops());
+		addDropItemIds(itemIds, info.getAlchableDrops());
+		addDropItemIds(itemIds, info.getUpgradeDrops());
+		return itemIds;
+	}
+
+	private void addDropItemIds(Map<String, Integer> itemIds, String drops)
+	{
+		for (String drop : splitDropTags(drops))
+		{
+			String normalizedDrop = normalizeItemName(drop);
+			if (normalizedDrop.isEmpty() || itemIds.containsKey(normalizedDrop))
+			{
+				continue;
+			}
+
+			int itemId = dropItemId(drop);
+			if (itemId > 0)
+			{
+				itemIds.put(normalizedDrop, itemId);
+			}
+		}
+	}
+
+	private int dropItemId(String itemName)
+	{
+		if (itemManager == null || itemName == null || itemName.isEmpty())
+		{
+			return -1;
+		}
+
+		List<ItemPrice> matches = itemManager.search(itemName);
+		if (matches == null || matches.isEmpty())
+		{
+			return dropItemIdFallback(itemName);
+		}
+
+		String normalizedItemName = normalizeItemName(itemName);
+		for (ItemPrice match : matches)
+		{
+			if (normalizedItemName.equals(normalizeItemName(match.getName())))
+			{
+				return itemManager.canonicalize(match.getId());
+			}
+		}
+
+		return itemManager.canonicalize(matches.get(0).getId());
+	}
+
+	static int dropItemIdFallback(String itemName)
+	{
+		switch (normalizeItemName(itemName))
+		{
+			case "attas seed":
+				return ItemID.ATTAS_SEED;
+			case "iasor seed":
+				return ItemID.IASOR_SEED;
+			case "kronos seed":
+				return ItemID.KRONOS_SEED;
+			case "watermelon seed":
+				return ItemID.WATERMELON_SEED;
+			case "snape grass seed":
+				return ItemID.SNAPE_GRASS_SEED;
+			case "white lily seed":
+				return ItemID.WHITE_LILY_SEED;
+			case "brimstone key":
+				return ItemID.KONAR_KEY;
+			case "brittle key":
+				return ItemID.SLAYER_ROOF_KEY;
+			default:
+				return -1;
+		}
+	}
+
+	private static List<String> splitDropTags(String value)
+	{
+		List<String> tags = new ArrayList<>();
+		if (value == null)
+		{
+			return tags;
+		}
+
+		for (String tag : value.split(","))
+		{
+			String trimmed = tag.trim();
+			if (!trimmed.isEmpty())
+			{
+				tags.add(trimmed);
+			}
+		}
+		return tags;
+	}
+
+	private void refreshCurrentNpcItemRequirements()
+	{
+		if (inspectPanel == null || !inspectPanel.isNpcActive()
+			|| currentNpcInfo == null || currentNpcInfo.getItemRequirements() == null || currentNpcInfo.getItemRequirements().isEmpty())
+		{
+			return;
+		}
+
+		List<NpcItemRequirementStatus> itemRequirementStatuses = npcItemRequirementStatuses(currentNpcInfo);
+		SwingUtilities.invokeLater(() -> showNpcInfo(
+			currentNpcInfo,
+			currentNpcRecommendation,
+			currentNpcRecommendationMessage,
+			itemRequirementStatuses,
+			currentNpcDropItemIds
+		));
+	}
+
+	private static List<NpcItemRequirementAlternativeStatus> npcItemRequirementAlternativeStatuses(
+		NpcItemRequirement requirement, Map<String, String> carriedItemNames)
+	{
+		if (requirement == null || requirement.getAlternatives() == null)
+		{
+			return Collections.emptyList();
+		}
+
+		List<NpcItemRequirementAlternativeStatus> alternatives = new ArrayList<>();
+		for (String alternative : requirement.getAlternatives())
+		{
+			String matchedItemName = carriedItemNames.get(normalizeItemName(alternative));
+			alternatives.add(new NpcItemRequirementAlternativeStatus(alternative, matchedItemName != null, matchedItemName));
+		}
+		return alternatives;
+	}
+
+	private Map<String, String> snapshotCarriedItemNames()
+	{
+		Map<String, String> itemNames = new LinkedHashMap<>();
+		addCarriedItemNames(itemNames, client.getItemContainer(InventoryID.INV), "In Inventory");
+		addCarriedItemNames(itemNames, client.getItemContainer(InventoryID.WORN), "Equipped");
+		return itemNames;
+	}
+
+	private void addCarriedItemNames(Map<String, String> itemNames, ItemContainer itemContainer, String source)
+	{
+		if (itemContainer == null)
+		{
+			return;
+		}
+
+		for (Item item : itemContainer.getItems())
+		{
+			if (item == null || item.getId() <= 0)
+			{
+				continue;
+			}
+
+			int itemId = itemManager.canonicalize(item.getId());
+			ItemComposition composition = itemManager.getItemComposition(itemId);
+			String itemName = composition.getMembersName();
+			if (itemName == null || itemName.isEmpty() || "null".equalsIgnoreCase(itemName))
+			{
+				continue;
+			}
+
+			itemNames.putIfAbsent(normalizeItemName(itemName), source);
+		}
+	}
+
+	private static String normalizeItemName(String itemName)
+	{
+		return itemName == null
+			? ""
+			: itemName.replace('\u00A0', ' ').trim().replaceAll("\\s+", " ").toLowerCase(Locale.ENGLISH);
 	}
 
 	private Collection<BankEquipmentRecommendationService.BankItemCandidate> snapshotBankEquipmentCandidates()

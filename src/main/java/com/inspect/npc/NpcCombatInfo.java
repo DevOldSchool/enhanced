@@ -1,5 +1,6 @@
 package com.inspect.npc;
 
+import java.util.List;
 import java.util.Objects;
 import lombok.Builder;
 import lombok.Value;
@@ -50,13 +51,19 @@ public class NpcCombatInfo
 	String superiorVariant;
 	String notableDrops;
 	String rareDrops;
+	String valuableDrops;
+	String slayerOnlyDrops;
 	String uniqueDrops;
 	String alchableDrops;
 	String clueDrops;
+	String ironmanDrops;
+	String upgradeDrops;
 	String resourceDrops;
 	String supplyDrops;
 	String assignedBy;
 	String taskOnly;
+	@Builder.Default
+	List<NpcItemRequirement> itemRequirements = java.util.Collections.emptyList();
 	long fetchedAtEpochSecond;
 	String sourceUrl;
 

@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -72,6 +73,28 @@ class NpcInspectCache
 		}
 
 		return CompletableFuture.supplyAsync(() -> readFromDisk(npcId, nowEpochSecond, ttlDays), executor);
+	}
+
+	CompletableFuture<Optional<NpcCombatInfo>> getBySearchTerm(String searchTerm, long nowEpochSecond, int ttlDays)
+	{
+		String normalizedSearchTerm = normalizeSearchTerm(searchTerm);
+		if (normalizedSearchTerm.isEmpty())
+		{
+			return CompletableFuture.completedFuture(Optional.empty());
+		}
+
+		synchronized (this)
+		{
+			for (NpcCombatInfo cached : memoryCache.values())
+			{
+				if (!cached.isExpired(nowEpochSecond, ttlDays) && matchesSearchTerm(cached, normalizedSearchTerm))
+				{
+					return CompletableFuture.completedFuture(Optional.of(cached));
+				}
+			}
+		}
+
+		return CompletableFuture.supplyAsync(() -> readBySearchTerm(normalizedSearchTerm, nowEpochSecond, ttlDays), executor);
 	}
 
 	CompletableFuture<Void> put(NpcCombatInfo info)
@@ -175,6 +198,73 @@ class NpcInspectCache
 		catch (IOException ex)
 		{
 			log.debug("Unable to read NPC Inspect cache", ex);
+			return Optional.empty();
+		}
+	}
+
+	private Optional<NpcCombatInfo> readBySearchTerm(String normalizedSearchTerm, long nowEpochSecond, int ttlDays)
+	{
+		try
+		{
+			Files.createDirectories(cacheDirectory);
+			loadIndexIfNeeded();
+
+			Map<Integer, String> cacheKeys;
+			synchronized (this)
+			{
+				cacheKeys = new HashMap<>(cacheKeysByNpc);
+			}
+
+			for (Map.Entry<Integer, String> entry : cacheKeys.entrySet())
+			{
+				Optional<NpcCombatInfo> cached = readCachedInfo(entry.getKey(), entry.getValue(), nowEpochSecond, ttlDays);
+				if (cached.isPresent() && matchesSearchTerm(cached.get(), normalizedSearchTerm))
+				{
+					return cached;
+				}
+			}
+		}
+		catch (IOException ex)
+		{
+			log.debug("Unable to read NPC Inspect cache by search term", ex);
+		}
+		return Optional.empty();
+	}
+
+	private Optional<NpcCombatInfo> readCachedInfo(int npcId, String cacheKey, long nowEpochSecond, int ttlDays)
+		throws IOException
+	{
+		Path cacheFile = cachePath(cacheKey);
+		if (!Files.isRegularFile(cacheFile))
+		{
+			return Optional.empty();
+		}
+
+		try (Reader reader = Files.newBufferedReader(cacheFile, StandardCharsets.UTF_8))
+		{
+			NpcCombatInfo info = gson.fromJson(reader, NpcCombatInfo.class);
+			if (info == null
+				|| info.getNpcId() != npcId
+				|| !cacheKey.equals(info.cacheKey())
+				|| info.isExpired(nowEpochSecond, ttlDays))
+			{
+				Files.deleteIfExists(cacheFile);
+				removeIndex(npcId);
+				return Optional.empty();
+			}
+
+			synchronized (this)
+			{
+				memoryCache.put(npcId, info);
+				cacheKeysByNpc.put(npcId, cacheKey);
+			}
+			return Optional.of(info);
+		}
+		catch (RuntimeException | IOException ex)
+		{
+			log.debug("Ignoring corrupt NPC Inspect cache file {}", cacheFile, ex);
+			Files.deleteIfExists(cacheFile);
+			removeIndex(npcId);
 			return Optional.empty();
 		}
 	}
@@ -284,5 +374,22 @@ class NpcInspectCache
 	private static boolean isValidCacheKey(String cacheKey)
 	{
 		return cacheKey != null && !cacheKey.isEmpty() && cacheKey.matches("[A-Za-z0-9._-]+");
+	}
+
+	private static boolean matchesSearchTerm(NpcCombatInfo info, String normalizedSearchTerm)
+	{
+		return normalizedSearchTerm.equals(normalizeSearchTerm(info.getDisplayName()))
+			|| normalizedSearchTerm.equals(normalizeSearchTerm(info.getWikiPage()));
+	}
+
+	private static String normalizeSearchTerm(String value)
+	{
+		return value == null
+			? ""
+			: value.replace('_', ' ')
+				.replace('\u00A0', ' ')
+				.trim()
+				.replaceAll("\\s+", " ")
+				.toLowerCase(Locale.ENGLISH);
 	}
 }

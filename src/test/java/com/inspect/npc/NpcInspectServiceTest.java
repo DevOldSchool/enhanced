@@ -83,6 +83,54 @@ public class NpcInspectServiceTest
 	}
 
 	@Test
+	public void searchUsesCachedNpcInfoForRepeatedQuery() throws Exception
+	{
+		QueuedResponseInterceptor responses = new QueuedResponseInterceptor();
+		responses.enqueue(200, searchResponse("Goblin guard"));
+		responses.enqueue(200, parseResponse("{{Infobox Monster\n"
+			+ "|name = Goblin guard\n"
+			+ "|combat = 2\n"
+			+ "|id = 3028\n"
+			+ "|dcrush = 5\n"
+			+ "}}"));
+		NpcInspectService npcService = service(responses);
+
+		NpcCombatInfo first = npcService.search("Goblin guard", 7).get(5, TimeUnit.SECONDS);
+		NpcCombatInfo second = npcService.search("Goblin guard", 7).get(5, TimeUnit.SECONDS);
+
+		assertEquals("Goblin guard", first.getDisplayName());
+		assertEquals(first, second);
+		assertEquals(2, responses.requestCount());
+		assertEquals("query", responses.requests().get(0).url().queryParameter("action"));
+		assertEquals("parse", responses.requests().get(1).url().queryParameter("action"));
+	}
+
+	@Test
+	public void searchUsesPersistedCachedNpcInfoByName() throws Exception
+	{
+		Path cacheDirectory = temporaryFolder.newFolder().toPath();
+		QueuedResponseInterceptor firstResponses = new QueuedResponseInterceptor();
+		firstResponses.enqueue(200, searchResponse("Goblin guard"));
+		firstResponses.enqueue(200, parseResponse("{{Infobox Monster\n"
+			+ "|name = Goblin guard\n"
+			+ "|combat = 2\n"
+			+ "|id = 3028\n"
+			+ "|dcrush = 5\n"
+			+ "}}"));
+		NpcInspectService firstService = service(firstResponses, cacheDirectory);
+		NpcCombatInfo first = firstService.search("Goblin guard", 7).get(5, TimeUnit.SECONDS);
+		firstService.shutDown();
+		service = null;
+
+		QueuedResponseInterceptor secondResponses = new QueuedResponseInterceptor();
+		NpcInspectService secondService = service(secondResponses, cacheDirectory);
+		NpcCombatInfo second = secondService.search("Goblin_guard", 7).get(5, TimeUnit.SECONDS);
+
+		assertEquals(first, second);
+		assertEquals(0, secondResponses.requestCount());
+	}
+
+	@Test
 	public void emptySearchResultReturnsNull() throws Exception
 	{
 		QueuedResponseInterceptor responses = new QueuedResponseInterceptor();
@@ -113,7 +161,11 @@ public class NpcInspectServiceTest
 
 	private NpcInspectService service(QueuedResponseInterceptor responses) throws IOException
 	{
-		Path cacheDirectory = temporaryFolder.newFolder().toPath();
+		return service(responses, temporaryFolder.newFolder().toPath());
+	}
+
+	private NpcInspectService service(QueuedResponseInterceptor responses, Path cacheDirectory)
+	{
 		service = new NpcInspectService(
 			new OkHttpClient.Builder().addInterceptor(responses).build(),
 			new Gson(),
@@ -134,6 +186,11 @@ public class NpcInspectServiceTest
 			+ "\",\"version_anchor\":\""
 			+ anchor
 			+ "\"}]}";
+	}
+
+	private static String searchResponse(String title)
+	{
+		return "{\"query\":{\"search\":[{\"title\":\"" + title + "\"}]}}";
 	}
 
 	private static void assertFailure(CheckedAction action, String expectedMessage) throws Exception

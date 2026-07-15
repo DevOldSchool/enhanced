@@ -4,14 +4,24 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import com.inspect.item.ItemInspectInfo;
+import com.inspect.npc.EquipmentRecommendation;
+import com.inspect.npc.NpcCombatInfo;
+import com.inspect.npc.NpcItemRequirement;
+import com.inspect.npc.NpcItemRequirementAlternativeStatus;
+import com.inspect.npc.NpcItemRequirementStatus;
 import com.inspect.player.PlayerEquipmentItem;
 import com.inspect.player.PlayerInspectAnalysis;
 import java.awt.Component;
 import java.awt.Container;
 import java.util.ArrayDeque;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Deque;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.AbstractButton;
 import javax.swing.JComponent;
@@ -82,6 +92,362 @@ public class InspectPanelTest
 		assertTrue(snapshot.equipmentImageComponentCount > 0);
 	}
 
+	@Test
+	public void rendersNpcItemRequirementStatuses() throws Exception
+	{
+		UiSnapshot snapshot = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			NpcCombatInfo info = NpcCombatInfo.builder()
+				.displayName("Gargoyle")
+				.itemRequirements(Collections.singletonList(new NpcItemRequirement("Rock hammer or Granite hammer", Arrays.asList("Rock hammer", "Granite hammer"))))
+				.build();
+
+			panel.showInfo(info, EquipmentRecommendation.preview(info), null, Collections.singletonList(new NpcItemRequirementStatus(
+				info.getItemRequirements().get(0),
+				Arrays.asList(
+					new NpcItemRequirementAlternativeStatus("Rock hammer", false, null),
+					new NpcItemRequirementAlternativeStatus("Granite hammer", true, "Equipped")
+				)
+			)));
+			return UiSnapshot.capture(panel);
+		});
+
+		assertTrue(snapshot.text.contains("Required items"));
+		assertTrue(snapshot.text.contains("Any one of these"));
+		assertTrue(snapshot.text.contains("Rock hammer"));
+		assertTrue(snapshot.text.contains("Missing"));
+		assertTrue(snapshot.text.contains("OR"));
+		assertTrue(snapshot.text.contains("Granite hammer"));
+		assertTrue(snapshot.text.contains("Equipped"));
+		assertTrue(snapshot.text.contains("Can I kill this?"));
+		assertFalse(snapshot.text.contains("Rock hammer or Granite hammer"));
+	}
+
+	@Test
+	public void rendersAssignedByTagsAsWikiLinks() throws Exception
+	{
+		UiSnapshot snapshot = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			NpcCombatInfo info = NpcCombatInfo.builder()
+				.displayName("Abyssal demon")
+				.assignedBy("Vannaka, Chaeldar, Konar quo Maten")
+				.build();
+
+			panel.showInfo(info, EquipmentRecommendation.preview(info), null, Collections.emptyList());
+			return UiSnapshot.capture(panel);
+		});
+
+		assertTrue(snapshot.text.contains("Assigned by"));
+		assertTrue(snapshot.text.contains("Vannaka"));
+		assertTrue(snapshot.text.contains("Chaeldar"));
+		assertTrue(snapshot.text.contains("Konar Quo Maten"));
+		assertTrue(snapshot.toolTips.contains("https://oldschool.runescape.wiki/w/Vannaka"));
+		assertTrue(snapshot.toolTips.contains("https://oldschool.runescape.wiki/w/Chaeldar"));
+		assertTrue(snapshot.toolTips.contains("https://oldschool.runescape.wiki/w/Konar_quo_Maten"));
+	}
+
+	@Test
+	public void rendersNpcDropFilterButtons() throws Exception
+	{
+		UiSnapshot snapshot = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			NpcCombatInfo info = NpcCombatInfo.builder()
+				.displayName("Abyssal demon")
+				.valuableDrops("Abyssal whip, Brimstone key")
+				.rareDrops("Abyssal whip")
+				.slayerOnlyDrops("Brimstone key")
+				.clueDrops("Clue scroll (hard)")
+				.ironmanDrops("Grimy ranarr weed")
+				.alchableDrops("Adamant platebody")
+				.upgradeDrops("Abyssal head")
+				.build();
+
+			panel.showInfo(info, EquipmentRecommendation.preview(info), null, Collections.emptyList());
+			return UiSnapshot.capture(panel);
+		});
+
+		assertTrue(snapshot.text.contains("Drop filters"));
+		assertTrue(snapshot.text.contains("Valuable"));
+		assertTrue(snapshot.text.contains("Rare"));
+		assertTrue(snapshot.text.contains("Slayer-only"));
+		assertTrue(snapshot.text.contains("Clue"));
+		assertTrue(snapshot.text.contains("Ironman"));
+		assertTrue(snapshot.text.contains("Alchable"));
+		assertTrue(snapshot.text.contains("Upgrade"));
+		assertTrue(snapshot.text.contains("Abyssal whip"));
+		assertTrue(snapshot.text.contains("Brimstone key"));
+		assertFalse(snapshot.text.contains("Abyssal whip, Brimstone key"));
+	}
+
+	@Test
+	public void switchingNpcDropFiltersRerendersDropRows() throws Exception
+	{
+		UiSnapshot snapshot = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			NpcCombatInfo info = NpcCombatInfo.builder()
+				.displayName("Abyssal demon")
+				.valuableDrops("Abyssal whip, Brimstone key")
+				.rareDrops("Abyssal whip")
+				.ironmanDrops("Grimy ranarr weed")
+				.build();
+
+			panel.showInfo(info, EquipmentRecommendation.preview(info), null, Collections.emptyList());
+			clickButton(panel, "Ironman");
+			return UiSnapshot.capture(panel);
+		});
+
+		assertTrue(snapshot.text.contains("Drop filters"));
+		assertTrue(snapshot.text.contains("Ironman"));
+		assertTrue(snapshot.text.contains("Grimy ranarr weed"));
+		assertFalse(snapshot.text.contains("Abyssal whip"));
+		assertFalse(snapshot.text.contains("Brimstone key"));
+	}
+
+	@Test
+	public void rendersNpcDropRowsFromPrecomputedItemIdsWithoutResolvingDefinitions() throws Exception
+	{
+		UiSnapshot snapshot = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			NpcCombatInfo info = NpcCombatInfo.builder()
+				.displayName("Abyssal demon")
+				.valuableDrops("Abyssal whip")
+				.build();
+			Map<String, Integer> dropItemIds = new LinkedHashMap<>();
+			dropItemIds.put("abyssal whip", 4151);
+
+			panel.showInfo(info, EquipmentRecommendation.preview(info), null, Collections.emptyList(), dropItemIds);
+			return UiSnapshot.capture(panel);
+		});
+
+		assertTrue(snapshot.text.contains("Drop filters"));
+		assertTrue(snapshot.text.contains("Abyssal whip"));
+		assertTrue(snapshot.popupActions.contains("Inspect item"));
+	}
+
+	@Test
+	public void unresolvedNpcDropRowsRenderWithoutInspectPopup() throws Exception
+	{
+		UiSnapshot snapshot = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			NpcCombatInfo info = NpcCombatInfo.builder()
+				.displayName("Kurask")
+				.valuableDrops("Leaf-bladed battleaxe")
+				.build();
+
+			panel.showInfo(info, EquipmentRecommendation.preview(info), null, Collections.emptyList(), Collections.emptyMap());
+			return UiSnapshot.capture(panel);
+		});
+
+		assertTrue(snapshot.text.contains("Drop filters"));
+		assertTrue(snapshot.text.contains("Leaf-bladed battleaxe"));
+		assertFalse(snapshot.popupActions.contains("Inspect item"));
+	}
+
+	@Test
+	public void rendersSavedNpcCompareTrayAndComparison() throws Exception
+	{
+		UiSnapshot snapshot = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			NpcCombatInfo pinned = NpcCombatInfo.builder()
+				.displayName("Gargoyle")
+				.combatLevel("111")
+				.hitpoints("105")
+				.maxHit("11")
+				.attack("120")
+				.build();
+			NpcCombatInfo current = NpcCombatInfo.builder()
+				.displayName("Abyssal demon")
+				.combatLevel("124")
+				.hitpoints("150")
+				.maxHit("8")
+				.attack("97")
+				.build();
+
+			panel.setPinnedInspects(PinnedInspectState.empty().withNpc(pinned));
+			panel.showInfo(current, EquipmentRecommendation.preview(current), null, Collections.emptyList());
+			return UiSnapshot.capture(panel);
+		});
+
+		assertTrue(snapshot.text.contains("Compare"));
+		assertTrue(snapshot.text.contains("NPC: Gargoyle"));
+		assertTrue(snapshot.text.contains("Compare NPC"));
+		assertTrue(snapshot.text.contains("Compared to NPC"));
+		assertTrue(snapshot.text.contains("Combat"));
+		assertTrue(snapshot.text.contains("+13"));
+		assertTrue(snapshot.text.contains("HP"));
+		assertTrue(snapshot.text.contains("+45"));
+		assertTrue(snapshot.text.contains("Max hit"));
+		assertTrue(snapshot.text.contains("-3"));
+	}
+
+	@Test
+	public void rendersSavedItemCompareTrayAndComparison() throws Exception
+	{
+		UiSnapshot snapshot = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			ItemInspectInfo pinned = ItemInspectInfo.builder()
+				.itemId(100)
+				.displayName("Rune scimitar")
+				.attackSlash("45")
+				.strength("44")
+				.build();
+			ItemInspectInfo current = ItemInspectInfo.builder()
+				.itemId(101)
+				.displayName("Dragon scimitar")
+				.attackSlash("67")
+				.strength("66")
+				.build();
+
+			panel.setPinnedInspects(PinnedInspectState.empty().withItem(pinned));
+			panel.showItemInfo(current, null, null, null);
+			return UiSnapshot.capture(panel);
+		});
+
+		assertTrue(snapshot.text.contains("Compare"));
+		assertTrue(snapshot.text.contains("Item: Rune scimitar"));
+		assertTrue(snapshot.text.contains("Compare item"));
+		assertTrue(snapshot.text.contains("Compared to item"));
+		assertTrue(snapshot.text.contains("Slash attack"));
+		assertTrue(snapshot.text.contains("Strength"));
+		assertTrue(snapshot.text.contains("+22"));
+	}
+
+	@Test
+	public void rendersSavedPlayerCompareTrayAndComparison() throws Exception
+	{
+		UiSnapshot snapshot = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			PlayerEquipmentItem pinnedWeapon = new PlayerEquipmentItem("Weapon", 0, "Rune scimitar", 15_000);
+			PlayerEquipmentItem currentWeapon = new PlayerEquipmentItem("Weapon", 0, "Dragon scimitar", 60_000);
+
+			panel.setPinnedInspects(PinnedInspectState.empty().withPlayer("Pinned player", 90, Collections.singletonList(pinnedWeapon)));
+			panel.showPlayerEquipment(
+				"Current player",
+				100,
+				Collections.singletonList(currentWeapon),
+				PlayerInspectAnalysis.message("60,000 coins", null),
+				false,
+				Collections.emptyList(),
+				Collections.emptyList());
+			return UiSnapshot.capture(panel);
+		});
+
+		assertTrue(snapshot.text.contains("Compare"));
+		assertTrue(snapshot.text.contains("Player: Pinned player"));
+		assertTrue(snapshot.text.contains("Compare player"));
+		assertTrue(snapshot.text.contains("Compared to player"));
+		assertTrue(snapshot.text.contains("Combat"));
+		assertTrue(snapshot.text.contains("+10"));
+		assertTrue(snapshot.text.contains("Gear value"));
+		assertTrue(snapshot.text.contains("+45000"));
+		assertTrue(snapshot.text.contains("Different"));
+		assertTrue(snapshot.text.contains("Weapon"));
+	}
+
+	@Test
+	public void clickingCompareRowsReopensSavedSelections() throws Exception
+	{
+		AtomicReference<NpcCombatInfo> openedNpc = new AtomicReference<>();
+		AtomicReference<ItemInspectInfo> openedItem = new AtomicReference<>();
+		AtomicReference<String> openedPlayer = new AtomicReference<>();
+		AtomicInteger clearedNpc = new AtomicInteger();
+
+		onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			NpcCombatInfo pinnedNpc = NpcCombatInfo.builder()
+				.displayName("Gargoyle")
+				.combatLevel("111")
+				.build();
+			ItemInspectInfo pinnedItem = ItemInspectInfo.builder()
+				.itemId(100)
+				.displayName("Rune scimitar")
+				.build();
+			PlayerEquipmentItem pinnedWeapon = new PlayerEquipmentItem("Weapon", 0, "Rune scimitar", 15_000);
+			NpcCombatInfo current = NpcCombatInfo.builder()
+				.displayName("Abyssal demon")
+				.combatLevel("124")
+				.build();
+
+			panel.setPinnedInspectHandler(new InspectPanel.PinnedInspectHandler()
+			{
+				@Override
+				public void pinNpc(NpcCombatInfo info)
+				{
+				}
+
+				@Override
+				public void pinItem(ItemInspectInfo info)
+				{
+				}
+
+				@Override
+				public void pinPlayer(String playerName, int combatLevel, java.util.List<PlayerEquipmentItem> equipment)
+				{
+				}
+
+				@Override
+				public void openNpc(NpcCombatInfo info)
+				{
+					openedNpc.set(info);
+				}
+
+				@Override
+				public void openItem(ItemInspectInfo info)
+				{
+					openedItem.set(info);
+				}
+
+				@Override
+				public void openPlayer(String playerName, int combatLevel, java.util.List<PlayerEquipmentItem> equipment)
+				{
+					openedPlayer.set(playerName);
+				}
+
+				@Override
+				public void clearNpc()
+				{
+					clearedNpc.incrementAndGet();
+				}
+
+				@Override
+				public void clearItem()
+				{
+				}
+
+				@Override
+				public void clearPlayer()
+				{
+				}
+			});
+			panel.setPinnedInspects(PinnedInspectState.empty()
+				.withNpc(pinnedNpc)
+				.withItem(pinnedItem)
+				.withPlayer("Pinned player", 90, Collections.singletonList(pinnedWeapon)));
+			panel.showInfo(current, EquipmentRecommendation.preview(current), null, Collections.emptyList());
+
+			clickButton(panel, "NPC: Gargoyle");
+			clickButton(panel, "Item: Rune scimitar");
+			clickButton(panel, "Player: Pinned player");
+			clickButton(panel, "X");
+			return null;
+		});
+
+		assertEquals("Gargoyle", openedNpc.get().getDisplayName());
+		assertEquals("Rune scimitar", openedItem.get().getDisplayName());
+		assertEquals("Pinned player", openedPlayer.get());
+		assertEquals(1, clearedNpc.get());
+	}
+
 	private static <T> T onEdt(Callable<T> action) throws Exception
 	{
 		AtomicReference<T> result = new AtomicReference<>();
@@ -103,6 +469,35 @@ public class InspectPanelTest
 			throw new AssertionError("Swing action failed", failure.get());
 		}
 		return result.get();
+	}
+
+	private static void clickButton(Component root, String text)
+	{
+		AbstractButton button = findButton(root, text);
+		if (button == null)
+		{
+			throw new AssertionError("Button not found: " + text);
+		}
+		button.doClick();
+	}
+
+	private static AbstractButton findButton(Component root, String text)
+	{
+		Deque<Component> components = new ArrayDeque<>();
+		components.add(root);
+		while (!components.isEmpty())
+		{
+			Component component = components.removeFirst();
+			if (component instanceof AbstractButton && text.equals(((AbstractButton) component).getText()))
+			{
+				return (AbstractButton) component;
+			}
+			if (component instanceof Container)
+			{
+				Collections.addAll(components, ((Container) component).getComponents());
+			}
+		}
+		return null;
 	}
 
 	private static final class UiSnapshot
