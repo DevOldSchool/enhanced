@@ -24,9 +24,9 @@ Most features are backed by OSRS Wiki data. Enable OSRS Wiki lookups once in the
 
 Item inspect shows wiki-backed item details, prices, requirements, sources, gear-role tags, bonuses, and comparison details where available.
 
-The Sources section expands item acquisition into readable categories such as shops, monsters, skilling, quests, and clue-related sources. Source text is cleaned from common wiki templates so quest and creation notes read naturally, and the OSRS Wiki button opens the source page with RuneLite's `LinkBrowser`.
+The Sources section expands item acquisition into readable categories such as shops, monsters, skilling, quests, and clue-related sources.
 
-The Requirements section combines equip requirements and source requirements in one readiness panel. Skill requirements are checked against your local real skill levels and update after login or level changes without making another wiki request.
+The Requirements section combines equip requirements and source requirements in one readiness panel. Skill requirements are checked against your local real skill levels and update after login or level changes.
 
 ![Item inspect example](images/item.png)
 

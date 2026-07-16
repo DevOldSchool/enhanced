@@ -100,6 +100,8 @@ public class InspectPanel extends PluginPanel
 	private boolean scrollToTopAfterRefresh;
 	private boolean preserveScrollOnNextReset;
 	private Point scrollPositionAfterRefresh;
+	private Point restoreScrollPositionOnNextReset;
+	private Point storedNpcScrollPosition;
 
 	@Inject
 	public InspectPanel(SpriteManager spriteManager, ItemManager itemManager)
@@ -2161,7 +2163,13 @@ public class InspectPanel extends PluginPanel
 
 	private void reset()
 	{
-		if (preserveScrollOnNextReset)
+		if (restoreScrollPositionOnNextReset != null)
+		{
+			scrollPositionAfterRefresh = restoreScrollPositionOnNextReset;
+			restoreScrollPositionOnNextReset = null;
+			scrollToTopAfterRefresh = false;
+		}
+		else if (preserveScrollOnNextReset)
 		{
 			scrollPositionAfterRefresh = currentViewPosition();
 			scrollToTopAfterRefresh = false;
@@ -2460,6 +2468,11 @@ public class InspectPanel extends PluginPanel
 	{
 		if (renderer != null)
 		{
+			if ("NPC".equals(tab) && storedNpcScrollPosition != null)
+			{
+				restoreScrollPositionOnNextReset = storedNpcScrollPosition;
+				storedNpcScrollPosition = null;
+			}
 			renderer.run();
 			return;
 		}
@@ -2802,6 +2815,10 @@ public class InspectPanel extends PluginPanel
 		{
 			if (itemInspectHandler != null)
 			{
+				if ("NPC".equals(activeTab))
+				{
+					storedNpcScrollPosition = currentViewPosition();
+				}
 				itemInspectHandler.inspectItem(itemId, itemName);
 			}
 		});

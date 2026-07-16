@@ -424,6 +424,62 @@ public class InspectPanelTest
 	}
 
 	@Test
+	public void npcDropItemInspectRestoresNpcScrollWhenReturningToNpcTab() throws Exception
+	{
+		AtomicReference<JScrollPane> scrollPane = new AtomicReference<>();
+		AtomicReference<String> inspectedItem = new AtomicReference<>();
+
+		onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			panel.setItemInspectHandler((itemId, itemName) ->
+			{
+				inspectedItem.set(itemName);
+				panel.showItemInfo(scrollableItem(itemName), null, null, null);
+			});
+			JScrollPane pane = new JScrollPane(panel);
+			pane.setSize(new Dimension(PluginPanel.PANEL_WIDTH, 120));
+			NpcCombatInfo info = NpcCombatInfo.builder()
+				.displayName("Blue dragon")
+				.combatLevel("111")
+				.hitpoints("105")
+				.attack("120")
+				.strength("110")
+				.defence("100")
+				.magic("1")
+				.ranged("1")
+				.valuableDrops("Abyssal whip")
+				.rareDrops("Abyssal whip")
+				.build();
+			Map<String, Integer> dropItemIds = new LinkedHashMap<>();
+			dropItemIds.put("abyssal whip", 4151);
+			panel.showInfo(info, EquipmentRecommendation.preview(info), null, Collections.emptyList(), dropItemIds);
+			pane.doLayout();
+			panel.doLayout();
+			pane.getViewport().setViewPosition(new Point(0, 300));
+			assertTrue(pane.getViewport().getViewPosition().y > 0);
+
+			clickPopupAction(panel, "Inspect item");
+			scrollPane.set(pane);
+			return null;
+		});
+		onEdt(() -> null);
+
+		onEdt(() ->
+		{
+			InspectPanel panel = (InspectPanel) scrollPane.get().getViewport().getView();
+			clickButton(panel, "NPC");
+			return null;
+		});
+		onEdt(() -> null);
+
+		int y = onEdt(() -> scrollPane.get().getViewport().getViewPosition().y);
+
+		assertEquals("Abyssal whip", inspectedItem.get());
+		assertTrue(y > 0);
+	}
+
+	@Test
 	public void unresolvedNpcDropRowsRenderWithoutInspectPopup() throws Exception
 	{
 		UiSnapshot snapshot = onEdt(() ->
@@ -743,6 +799,16 @@ public class InspectPanelTest
 		button.doClick();
 	}
 
+	private static void clickPopupAction(Component root, String text)
+	{
+		AbstractButton button = findPopupAction(root, text);
+		if (button == null)
+		{
+			throw new AssertionError("Popup action not found: " + text);
+		}
+		button.doClick();
+	}
+
 	private static AbstractButton findButton(Component root, String text)
 	{
 		Deque<Component> components = new ArrayDeque<>();
@@ -750,6 +816,33 @@ public class InspectPanelTest
 		while (!components.isEmpty())
 		{
 			Component component = components.removeFirst();
+			if (component instanceof AbstractButton && text.equals(((AbstractButton) component).getText()))
+			{
+				return (AbstractButton) component;
+			}
+			if (component instanceof Container)
+			{
+				Collections.addAll(components, ((Container) component).getComponents());
+			}
+		}
+		return null;
+	}
+
+	private static AbstractButton findPopupAction(Component root, String text)
+	{
+		Deque<Component> components = new ArrayDeque<>();
+		components.add(root);
+		while (!components.isEmpty())
+		{
+			Component component = components.removeFirst();
+			if (component instanceof JComponent)
+			{
+				JPopupMenu popupMenu = ((JComponent) component).getComponentPopupMenu();
+				if (popupMenu != null)
+				{
+					components.addLast(popupMenu);
+				}
+			}
 			if (component instanceof AbstractButton && text.equals(((AbstractButton) component).getText()))
 			{
 				return (AbstractButton) component;
