@@ -16,6 +16,7 @@ import java.util.regex.Pattern;
 class ItemInspectParser
 {
 	private static final Pattern WIKI_LINK = Pattern.compile("\\[\\[([^]|]+\\|)?([^]]+)]]");
+	private static final Pattern MEDIA_LINK = Pattern.compile("\\[\\[(?:File|Image):[^]]+]]", Pattern.CASE_INSENSITIVE);
 	private static final Pattern HTML_TAG = Pattern.compile("<[^>]+>");
 	private static final Pattern REQUIREMENT_PAIR = Pattern.compile("(\\d+)\\s+(Attack|Strength|Defence|Ranged|Magic|Prayer|Hitpoints|Slayer)\\b", Pattern.CASE_INSENSITIVE);
 	private static final Pattern REVERSED_REQUIREMENT_PAIR = Pattern.compile("(Attack|Strength|Defence|Ranged|Magic|Prayer|Hitpoints|Slayer)\\s+level\\s+of\\s+(\\d+)", Pattern.CASE_INSENSITIVE);
@@ -256,7 +257,7 @@ class ItemInspectParser
 
 	private static String normalizeValue(String value)
 	{
-		String normalized = value.replace("&nbsp;", " ").replace("&#160;", " ");
+		String normalized = MEDIA_LINK.matcher(value.replace("&nbsp;", " ").replace("&#160;", " ")).replaceAll(" ");
 		Matcher linkMatcher = WIKI_LINK.matcher(normalized);
 		StringBuilder linkBuffer = new StringBuilder();
 		while (linkMatcher.find())
@@ -316,6 +317,12 @@ class ItemInspectParser
 	private static String templateText(String template)
 	{
 		List<String> parts = splitTemplateParts(template);
+		String templateName = parts.get(0).trim().toLowerCase(Locale.ROOT);
+		if ("external".equals(templateName) || "clear".equals(templateName))
+		{
+			return "";
+		}
+
 		List<String> values = new ArrayList<>();
 		for (int i = 1; i < parts.size(); i++)
 		{
@@ -534,7 +541,9 @@ class ItemInspectParser
 		List<String> sources = new ArrayList<>();
 		addSourceIfPresent(sources, lower, "dropped by", "Dropped");
 		addSourceIfPresent(sources, lower, "sold by", "Sold");
-		addSourceIfPresent(sources, lower, "shop", "Shop");
+		addSourceIfPresent(sources, lower, "sold at", "Sold");
+		addSourceIfPresent(sources, lower, "purchased from", "Sold");
+		addSourceIfPresent(sources, lower, "bought from", "Sold");
 		addSourceIfPresent(sources, lower, "created", "Created");
 		addSourceIfPresent(sources, lower, "made by", "Created");
 		addSourceIfPresent(sources, lower, "reward", "Reward");
@@ -559,7 +568,7 @@ class ItemInspectParser
 
 			String lower = detail.toLowerCase(Locale.ROOT);
 			addSourceDetail(sources, "Shops", detail, lower,
-				"shop", "sold by", "sold at", "purchased from", "bought from");
+				"sold by", "sold at", "purchased from", "bought from");
 			addSourceDetail(sources, "Monsters", detail, lower,
 				"dropped by", "drop from", "drops from", "monster");
 			addSourceDetail(sources, "Skilling", detail, lower,

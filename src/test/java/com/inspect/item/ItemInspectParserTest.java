@@ -186,6 +186,28 @@ public class ItemInspectParserTest
 	}
 
 	@Test
+	public void stripsMediaLinksFromStardustSourceDetails()
+	{
+		String wikitext = "{{External|rs}}\n"
+			+ "{{Infobox Item\n"
+			+ "|name = Stardust\n"
+			+ "|id = 25527\n"
+			+ "}}\n"
+			+ "[[File:Stardust 175 detail.png|left|150px]]\n"
+			+ "'''Stardust''' can be mined during the [[Shooting Stars]] activity. "
+			+ "It is used as currency in [[Dusuri's Star Shop]] or to add charges to the [[celestial ring]].\n";
+
+		ItemInspectInfo info = parser.parse(25527, "Stardust", new ItemWikiLookup("Stardust", null, "https://wiki"), wikitext);
+
+		assertEquals("Skilling", info.getSourceSummary());
+		assertEquals(1, info.getSourcePlan().size());
+		assertEquals("Skilling", info.getSourcePlan().get(0).getCategory());
+		assertEquals("Stardust can be mined during the Shooting Stars activity.", info.getSourcePlan().get(0).getDetails().get(0));
+		assertFalse(info.getSourcePlan().get(0).getDetails().get(0).contains("left|150px"));
+		assertFalse(info.getSourcePlan().get(0).getDetails().get(0).startsWith("rs "));
+	}
+
+	@Test
 	public void parsesRunePlatelegsRequirementsWithoutExperienceAsLevel()
 	{
 		String wikitext = "{{Infobox Item\n"
