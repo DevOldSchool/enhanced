@@ -83,6 +83,45 @@ public class NpcInspectServiceTest
 	}
 
 	@Test
+	public void inspectSelectsLaterInfoboxOnSharedNpcPage() throws Exception
+	{
+		QueuedResponseInterceptor responses = new QueuedResponseInterceptor();
+		responses.enqueue(200, bucketResponse("Guard", "Varrock 1"));
+		responses.enqueue(200, parseResponse("{{Multi Infobox\n"
+			+ "|text1 = Edgeville\n"
+			+ "|item1 =\n"
+			+ "{{Infobox Monster\n"
+			+ "|version1 = Edgeville 1\n"
+			+ "|name = Guard\n"
+			+ "|combat = 21\n"
+			+ "|attack style = [[Stab]]\n"
+			+ "|id1 = 3254\n"
+			+ "}}\n"
+			+ "|text2 = Varrock\n"
+			+ "|item2 =\n"
+			+ "{{Infobox Monster\n"
+			+ "|version1 = Varrock 1\n"
+			+ "|name = Guard\n"
+			+ "|combat = 21\n"
+			+ "|attack style = [[Crush]]\n"
+			+ "|dcrush = 25\n"
+			+ "|id1 = 11911,hist3010\n"
+			+ "}}\n"
+			+ "}}"));
+		NpcInspectService npcService = service(responses);
+
+		NpcCombatInfo info = npcService.inspect(11911, "Guard", 7).get(5, TimeUnit.SECONDS);
+
+		assertEquals("Guard", info.getWikiPage());
+		assertEquals("Varrock_1", info.getWikiAnchor());
+		assertEquals("Guard", info.getDisplayName());
+		assertEquals("Crush", info.getAttackStyle());
+		assertEquals("25", info.getCrushDefence());
+		assertEquals(2, responses.requestCount());
+		assertEquals("Guard", responses.requests().get(1).url().queryParameter("page"));
+	}
+
+	@Test
 	public void searchUsesCachedNpcInfoForRepeatedQuery() throws Exception
 	{
 		QueuedResponseInterceptor responses = new QueuedResponseInterceptor();
