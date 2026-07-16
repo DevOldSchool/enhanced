@@ -99,6 +99,7 @@ public class InspectPanel extends PluginPanel
 	private final Deque<SearchChip> recentSearches = new ArrayDeque<>();
 	private boolean scrollToTopAfterRefresh;
 	private boolean preserveScrollOnNextReset;
+	private Point scrollPositionAfterRefresh;
 
 	@Inject
 	public InspectPanel(SpriteManager spriteManager, ItemManager itemManager)
@@ -382,6 +383,12 @@ public class InspectPanel extends PluginPanel
 	{
 		lastItemRenderer = () -> renderItemInfo(info, equippedInfo, requirementSummary, priceSummary);
 		renderItemInfo(info, equippedInfo, requirementSummary, priceSummary);
+	}
+
+	public void refreshItemInfo(ItemInspectInfo info, ItemInspectInfo equippedInfo, ItemRequirementSummary requirementSummary, ItemPriceSummary priceSummary)
+	{
+		preserveScrollOnNextReset = true;
+		showItemInfo(info, equippedInfo, requirementSummary, priceSummary);
 	}
 
 	private void renderItemInfo(ItemInspectInfo info, ItemInspectInfo equippedInfo, ItemRequirementSummary requirementSummary, ItemPriceSummary priceSummary)
@@ -2154,8 +2161,17 @@ public class InspectPanel extends PluginPanel
 
 	private void reset()
 	{
+		if (preserveScrollOnNextReset)
+		{
+			scrollPositionAfterRefresh = currentViewPosition();
+			scrollToTopAfterRefresh = false;
+		}
+		else
+		{
+			scrollPositionAfterRefresh = null;
+			scrollToTopAfterRefresh = true;
+		}
 		removeAll();
-		scrollToTopAfterRefresh = !preserveScrollOnNextReset;
 		preserveScrollOnNextReset = false;
 		addSearchControls();
 		addTabControls();
@@ -2177,14 +2193,36 @@ public class InspectPanel extends PluginPanel
 			scrollToTop();
 			SwingUtilities.invokeLater(this::scrollToTop);
 		}
+		if (scrollPositionAfterRefresh != null)
+		{
+			Point position = scrollPositionAfterRefresh;
+			scrollPositionAfterRefresh = null;
+			restoreScrollPosition(position);
+			SwingUtilities.invokeLater(() -> restoreScrollPosition(position));
+		}
 	}
 
 	private void scrollToTop()
 	{
+		restoreScrollPosition(new Point(0, 0));
+	}
+
+	private Point currentViewPosition()
+	{
 		JViewport viewport = (JViewport) SwingUtilities.getAncestorOfClass(JViewport.class, this);
 		if (viewport != null)
 		{
-			viewport.setViewPosition(new Point(0, 0));
+			return viewport.getViewPosition();
+		}
+		return null;
+	}
+
+	private void restoreScrollPosition(Point position)
+	{
+		JViewport viewport = (JViewport) SwingUtilities.getAncestorOfClass(JViewport.class, this);
+		if (viewport != null && position != null)
+		{
+			viewport.setViewPosition(position);
 		}
 	}
 
