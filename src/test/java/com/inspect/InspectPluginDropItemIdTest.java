@@ -14,6 +14,11 @@ public class InspectPluginDropItemIdTest
 	@Test
 	public void resolvesKnownUnindexedDropItems()
 	{
+		assertEquals(ItemID.COINS, InspectPlugin.dropItemIdFallback("Coins"));
+		assertEquals(ItemID.KEYHALF1, InspectPlugin.dropItemIdFallback("Tooth half of key"));
+		assertEquals(ItemID.KEYHALF2, InspectPlugin.dropItemIdFallback("Loop half of key"));
+		assertEquals(ItemID.VARLAMORE_KEY_HALF_1, InspectPlugin.dropItemIdFallback("Tooth half of key (moon key)"));
+		assertEquals(ItemID.VARLAMORE_KEY_HALF_2, InspectPlugin.dropItemIdFallback("Loop half of key (moon key)"));
 		assertEquals(ItemID.ATTAS_SEED, InspectPlugin.dropItemIdFallback("Attas seed"));
 		assertEquals(ItemID.IASOR_SEED, InspectPlugin.dropItemIdFallback("Iasor seed"));
 		assertEquals(ItemID.KRONOS_SEED, InspectPlugin.dropItemIdFallback("Kronos seed"));

@@ -1304,10 +1304,16 @@ public class InspectPlugin extends Plugin
 			return -1;
 		}
 
+		int fallbackItemId = dropItemIdFallback(itemName);
+		if (fallbackItemId > 0)
+		{
+			return fallbackItemId;
+		}
+
 		List<ItemPrice> matches = itemManager.search(itemName);
 		if (matches == null || matches.isEmpty())
 		{
-			return dropItemIdFallback(itemName);
+			return -1;
 		}
 
 		String normalizedItemName = normalizeItemName(itemName);
@@ -1326,6 +1332,16 @@ public class InspectPlugin extends Plugin
 	{
 		switch (normalizeItemName(itemName))
 		{
+			case "coins":
+				return ItemID.COINS;
+			case "tooth half of key":
+				return ItemID.KEYHALF1;
+			case "loop half of key":
+				return ItemID.KEYHALF2;
+			case "tooth half of key (moon key)":
+				return ItemID.VARLAMORE_KEY_HALF_1;
+			case "loop half of key (moon key)":
+				return ItemID.VARLAMORE_KEY_HALF_2;
 			case "attas seed":
 				return ItemID.ATTAS_SEED;
 			case "iasor seed":
