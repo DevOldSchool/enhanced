@@ -26,13 +26,11 @@ class NpcInspectParser
 
 	NpcCombatInfo parse(int npcId, String fallbackName, NpcWikiLookup lookup, String wikitext)
 	{
-		String infobox = extractInfobox(wikitext);
-		if (infobox == null)
+		Map<String, String> fields = matchingFields(npcId, lookup.getAnchor(), wikitext);
+		if (fields == null)
 		{
 			return null;
 		}
-
-		Map<String, String> fields = parseFields(infobox);
 		String suffix = selectVersionSuffix(npcId, lookup.getAnchor(), fields);
 		if (suffix == null)
 		{
@@ -115,6 +113,11 @@ class NpcInspectParser
 			return null;
 		}
 
+		return extractInfobox(wikitext, start);
+	}
+
+	private static String extractInfobox(String wikitext, int start)
+	{
 		int depth = 0;
 		for (int i = start; i < wikitext.length() - 1; i++)
 		{
@@ -136,6 +139,43 @@ class NpcInspectParser
 		}
 
 		return null;
+	}
+
+	private static Map<String, String> matchingFields(int npcId, String anchor, String wikitext)
+	{
+		for (String infobox : extractInfoboxes(wikitext))
+		{
+			Map<String, String> fields = parseFields(infobox);
+			if (selectVersionSuffix(npcId, anchor, fields) != null)
+			{
+				return fields;
+			}
+		}
+		return null;
+	}
+
+	private static List<String> extractInfoboxes(String wikitext)
+	{
+		List<String> infoboxes = new ArrayList<>();
+		int searchFrom = 0;
+		while (searchFrom < wikitext.length())
+		{
+			int start = wikitext.indexOf("{{Infobox Monster", searchFrom);
+			if (start < 0)
+			{
+				break;
+			}
+
+			String infobox = extractInfobox(wikitext, start);
+			if (infobox == null)
+			{
+				break;
+			}
+
+			infoboxes.add(infobox);
+			searchFrom = start + infobox.length();
+		}
+		return infoboxes;
 	}
 
 	static Map<String, String> parseFields(String infobox)

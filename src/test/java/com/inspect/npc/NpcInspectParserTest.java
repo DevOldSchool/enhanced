@@ -37,6 +37,41 @@ public class NpcInspectParserTest
 	}
 
 	@Test
+	public void selectsLaterInfoboxByNpcIdOnMultiInfoboxPage()
+	{
+		String wikitext = "{{Multi Infobox\n"
+			+ "|text1 = Edgeville\n"
+			+ "|item1 =\n"
+			+ "{{Infobox Monster\n"
+			+ "|version1 = Edgeville 1\n"
+			+ "|name = Guard\n"
+			+ "|combat = 21\n"
+			+ "|attack style = [[Stab]]\n"
+			+ "|id1 = 3254\n"
+			+ "}}\n"
+			+ "|text2 = Varrock\n"
+			+ "|item2 =\n"
+			+ "{{Infobox Monster\n"
+			+ "|version1 = Varrock 1\n"
+			+ "|version2 = Varrock 2\n"
+			+ "|name = Guard\n"
+			+ "|combat = 21\n"
+			+ "|attack style = [[Crush]]\n"
+			+ "|dcrush = 25\n"
+			+ "|id1 = 11911,hist3010\n"
+			+ "|id2 = 11912\n"
+			+ "}}\n"
+			+ "}}";
+
+		NpcCombatInfo info = parser.parse(11911, "Guard", new NpcWikiLookup("Guard", "Varrock_1", "https://oldschool.runescape.wiki/w/Guard#Varrock_1"), wikitext);
+
+		assertEquals("Guard", info.getDisplayName());
+		assertEquals("21", info.getCombatLevel());
+		assertEquals("Crush", info.getAttackStyle());
+		assertEquals("25", info.getCrushDefence());
+	}
+
+	@Test
 	public void parsesUnsuffixedSingleVersionFields()
 	{
 		String wikitext = "{{Infobox Monster\n"
