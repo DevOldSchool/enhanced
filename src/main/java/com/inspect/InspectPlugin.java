@@ -1048,7 +1048,7 @@ public class InspectPlugin extends Plugin
 		{
 			if (inspectPanel != null && inspectPanel.isItemActive() && currentItemInfo != null)
 			{
-				inspectPanel.showItemInfo(currentItemInfo, currentItemEquippedInfo, requirementSummary, currentItemPriceSummary);
+				inspectPanel.refreshItemInfo(currentItemInfo, currentItemEquippedInfo, requirementSummary, currentItemPriceSummary);
 			}
 		});
 	}

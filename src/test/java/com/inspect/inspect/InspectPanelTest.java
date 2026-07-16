@@ -186,6 +186,47 @@ public class InspectPanelTest
 	}
 
 	@Test
+	public void itemInfoRefreshPreservesScrollPosition() throws Exception
+	{
+		AtomicReference<JScrollPane> scrollPane = new AtomicReference<>();
+		AtomicReference<String> text = new AtomicReference<>();
+
+		onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			JScrollPane pane = new JScrollPane(panel);
+			pane.setSize(new Dimension(PluginPanel.PANEL_WIDTH, 120));
+			panel.showItemInfo(scrollableItem("Rune platebody"), null, null, null);
+			pane.doLayout();
+			panel.doLayout();
+			scrollPane.set(pane);
+			return null;
+		});
+		onEdt(() -> null);
+
+		onEdt(() ->
+		{
+			InspectPanel panel = (InspectPanel) scrollPane.get().getViewport().getView();
+			ItemRequirementSummary requirements = new ItemRequirementSummary(
+				Collections.singletonList("Defence 40 (81)"),
+				Collections.emptyList()
+			);
+			scrollPane.get().getViewport().setViewPosition(new Point(0, 300));
+			assertTrue(scrollPane.get().getViewport().getViewPosition().y > 0);
+
+			panel.refreshItemInfo(scrollableItem("Rune platebody"), null, requirements, null);
+			text.set(UiSnapshot.capture(panel).text);
+			return null;
+		});
+		onEdt(() -> null);
+
+		int y = onEdt(() -> scrollPane.get().getViewport().getViewPosition().y);
+
+		assertTrue(y > 0);
+		assertTrue(text.get().contains("Defence 40 (81)"));
+	}
+
+	@Test
 	public void redactsEquipmentDetailsInPvpAreas() throws Exception
 	{
 		UiSnapshot snapshot = onEdt(() ->
