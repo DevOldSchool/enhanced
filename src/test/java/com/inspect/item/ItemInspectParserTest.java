@@ -208,6 +208,33 @@ public class ItemInspectParserTest
 	}
 
 	@Test
+	public void ignoresChangesSectionWhenParsingEnsouledHeadSources()
+	{
+		String wikitext = "{{Infobox Item\n"
+			+ "|name = Ensouled dragon head\n"
+			+ "|id = 13510\n"
+			+ "}}\n"
+			+ "[[File:Ensouled dragon head detail.png|left|150px]]\n"
+			+ "An '''ensouled dragon head''' is an item which can be dropped by chromatic [[dragon (race)|dragons]]. "
+			+ "It is used to gain [[Prayer]] experience by using the level 90 [[Magic]] spell [[Master Reanimation]].\n"
+			+ "==Changes==\n"
+			+ "{{Subject changes\n"
+			+ "|date = 28 April 2021\n"
+			+ "|update = Arceuus Spellbook Beta and A Kingdom Divided Preparation\n"
+			+ "|change = The examine text was slightly changed; previously, it was ''\"The creature's soul is still in here.\"''\n"
+			+ "}}\n";
+
+		ItemInspectInfo info = parser.parse(13510, "Ensouled dragon head",
+			new ItemWikiLookup("Ensouled_dragon_head", null, "https://wiki"), wikitext);
+
+		assertEquals("Monsters", info.getSourceSummary());
+		assertEquals(1, info.getSourcePlan().size());
+		assertEquals("Monsters", info.getSourcePlan().get(0).getCategory());
+		assertEquals("An ensouled dragon head is an item which can be dropped by chromatic dragons.",
+			info.getSourcePlan().get(0).getDetails().get(0));
+	}
+
+	@Test
 	public void parsesRunePlatelegsRequirementsWithoutExperienceAsLevel()
 	{
 		String wikitext = "{{Infobox Item\n"

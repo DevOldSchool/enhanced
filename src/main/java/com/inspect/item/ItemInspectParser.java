@@ -18,6 +18,7 @@ class ItemInspectParser
 	private static final Pattern WIKI_LINK = Pattern.compile("\\[\\[([^]|]+\\|)?([^]]+)]]");
 	private static final Pattern MEDIA_LINK = Pattern.compile("\\[\\[(?:File|Image):[^]]+]]", Pattern.CASE_INSENSITIVE);
 	private static final Pattern HTML_TAG = Pattern.compile("<[^>]+>");
+	private static final Pattern SOURCE_STOP_HEADING = Pattern.compile("(?im)^==\\s*(?:Changes|References|Trivia|Gallery|Update history)\\s*==\\s*$");
 	private static final Pattern REQUIREMENT_PAIR = Pattern.compile("(\\d+)\\s+(Attack|Strength|Defence|Ranged|Magic|Prayer|Hitpoints|Slayer)\\b", Pattern.CASE_INSENSITIVE);
 	private static final Pattern REVERSED_REQUIREMENT_PAIR = Pattern.compile("(Attack|Strength|Defence|Ranged|Magic|Prayer|Hitpoints|Slayer)\\s+level\\s+of\\s+(\\d+)", Pattern.CASE_INSENSITIVE);
 	private static final Pattern ANY_REQUIREMENT_PAIR = Pattern.compile("(?:level\\s+|requires\\s+)(\\d+)\\s+(Attack|Strength|Defence|Ranged|Magic|Prayer|Hitpoints|Slayer|Cooking|Woodcutting|Fletching|Fishing|Firemaking|Crafting|Smithing|Mining|Herblore|Agility|Thieving|Farming|Runecraft|Runecrafting|Hunter|Construction)\\b", Pattern.CASE_INSENSITIVE);
@@ -537,7 +538,7 @@ class ItemInspectParser
 			return String.join(", ", sources);
 		}
 
-		String lower = wikitext.toLowerCase(Locale.ROOT);
+		String lower = sourceText(wikitext).toLowerCase(Locale.ROOT);
 		List<String> sources = new ArrayList<>();
 		addSourceIfPresent(sources, lower, "dropped by", "Dropped");
 		addSourceIfPresent(sources, lower, "sold by", "Sold");
@@ -553,8 +554,7 @@ class ItemInspectParser
 
 	private static List<ItemSource> parseSourcePlan(String wikitext, String questRequirements)
 	{
-		String sourceText = withoutInfobox(withoutInfobox(wikitext, "{{Infobox Item"), "{{Infobox Bonuses");
-		String normalized = normalizeValue(sourceText)
+		String normalized = normalizeValue(sourceText(wikitext))
 			.replace('\n', ' ')
 			.replaceAll("\\s+", " ");
 		Map<String, SourceAccumulator> sources = new LinkedHashMap<>();
@@ -610,12 +610,19 @@ class ItemInspectParser
 		return infobox == null ? wikitext : wikitext.replace(infobox, " ");
 	}
 
+	private static String sourceText(String wikitext)
+	{
+		String text = withoutInfobox(withoutInfobox(wikitext, "{{Infobox Item"), "{{Infobox Bonuses");
+		Matcher stopHeading = SOURCE_STOP_HEADING.matcher(text);
+		return stopHeading.find() ? text.substring(0, stopHeading.start()) : text;
+	}
+
 	private static void addSourceDetail(Map<String, SourceAccumulator> sources, String category, String detail, String lowerDetail,
 		String... needles)
 	{
 		for (String needle : needles)
 		{
-			int index = lowerDetail.indexOf(needle);
+			int index = sourceNeedleIndex(lowerDetail, needle);
 			if (index < 0 || isNegatedSource(lowerDetail, index))
 			{
 				continue;
@@ -626,6 +633,37 @@ class ItemInspectParser
 			source.addRequirements(parseSourceRequirements(detail, category));
 			return;
 		}
+	}
+
+	private static int sourceNeedleIndex(String lowerDetail, String needle)
+	{
+		int from = 0;
+		while (from < lowerDetail.length())
+		{
+			int index = lowerDetail.indexOf(needle, from);
+			if (index < 0)
+			{
+				return -1;
+			}
+			if (!isWordPrefixNeedle(needle) || index == 0 || !Character.isLetterOrDigit(lowerDetail.charAt(index - 1)))
+			{
+				return index;
+			}
+			from = index + needle.length();
+		}
+		return -1;
+	}
+
+	private static boolean isWordPrefixNeedle(String needle)
+	{
+		for (int i = 0; i < needle.length(); i++)
+		{
+			if (!Character.isLetter(needle.charAt(i)))
+			{
+				return false;
+			}
+		}
+		return true;
 	}
 
 	private static List<ItemSourceRequirement> parseSourceRequirements(String detail, String context)
