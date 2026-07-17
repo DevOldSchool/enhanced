@@ -86,6 +86,31 @@ public class ItemInspectServiceTest
 	}
 
 	@Test
+	public void usesWikiCategoriesToIdentifyMonsterDropSources() throws Exception
+	{
+		QueuedResponseInterceptor responses = new QueuedResponseInterceptor();
+		responses.enqueue(200, bucketResponse("item_name", "Dragon plateskirt", ""));
+		responses.enqueue(200, parseResponse("{{Infobox Item\n"
+			+ "|name = Dragon plateskirt\n"
+			+ "|id = 4585\n"
+			+ "}}\n"
+			+ "The dragon plateskirt requires a Defence level of 60 to be worn.\n"
+			+ "==Treasure Trails==\n"
+			+ "{{EmoteClue|tier=master|item1=Dragon plateskirt}}\n"
+			+ "==Item sources==\n"
+			+ "{{Drop sources|Dragon plateskirt}}\n",
+			"Items_needed_for_an_emote_clue",
+			"Items_dropped_by_monster"));
+		ItemInspectService itemService = service(responses);
+
+		ItemInspectInfo info = itemService.inspect(4585, "Dragon plateskirt", 7).get(5, TimeUnit.SECONDS);
+
+		assertEquals("Monsters", info.getSourceSummary());
+		assertEquals("wikitext|categories", responses.requests().get(1).url().queryParameter("prop"));
+		assertEquals(2, responses.requestCount());
+	}
+
+	@Test
 	public void emptySearchResultReturnsNull() throws Exception
 	{
 		QueuedResponseInterceptor responses = new QueuedResponseInterceptor();
@@ -120,6 +145,37 @@ public class ItemInspectServiceTest
 		assertEquals(2, responses.requestCount());
 		assertEquals("query", responses.requests().get(0).url().queryParameter("action"));
 		assertEquals("parse", responses.requests().get(1).url().queryParameter("action"));
+	}
+
+	@Test
+	public void exactVariantSearchSelectsMatchingInfoboxVersion() throws Exception
+	{
+		QueuedResponseInterceptor responses = new QueuedResponseInterceptor();
+		responses.enqueue(200, searchResponse("Dragon dagger"));
+		responses.enqueue(200, parseResponse("{{Infobox Item\n"
+			+ "|version1 = Unpoisoned\n"
+			+ "|version2 = Poison\n"
+			+ "|version3 = Poison+\n"
+			+ "|version4 = Poison++\n"
+			+ "|name1 = Dragon dagger\n"
+			+ "|name2 = Dragon dagger(p)\n"
+			+ "|name3 = Dragon dagger(p+)\n"
+			+ "|name4 = Dragon dagger(p++)\n"
+			+ "|id1 = 1215\n"
+			+ "|id2 = 1231\n"
+			+ "|id3 = 5680\n"
+			+ "|id4 = 5698\n"
+			+ "}}\n"));
+		ItemInspectService itemService = service(responses);
+
+		ItemInspectInfo info = itemService.search("Dragon dagger(p++)", 7).get(5, TimeUnit.SECONDS);
+
+		assertEquals(5698, info.getItemId());
+		assertEquals("Dragon dagger(p++)", info.getDisplayName());
+		assertEquals("Poison++", info.getWikiAnchor());
+		assertEquals("https://wiki.test/w/Dragon%20dagger#Poison%2B%2B", info.getSourceUrl());
+		assertEquals("Dragon dagger(p++)", responses.requests().get(0).url().queryParameter("srsearch"));
+		assertEquals(2, responses.requestCount());
 	}
 
 	@Test
@@ -217,9 +273,9 @@ public class ItemInspectServiceTest
 		return "{\"query\":{\"search\":[{\"title\":\"" + title + "\"}]}}";
 	}
 
-	private static String parseResponse(String wikitext)
+	private static String parseResponse(String wikitext, String... categories)
 	{
-		return new Gson().toJson(new ParseResponse(wikitext));
+		return new Gson().toJson(new ParseResponse(wikitext, categories));
 	}
 
 	private static String bucketResponse(String nameField, String name, String anchor)
@@ -256,19 +312,36 @@ public class ItemInspectServiceTest
 	{
 		private final Parse parse;
 
-		private ParseResponse(String wikitext)
+		private ParseResponse(String wikitext, String[] categories)
 		{
-			this.parse = new Parse(wikitext);
+			this.parse = new Parse(wikitext, categories);
 		}
 	}
 
 	private static final class Parse
 	{
 		private final Wikitext wikitext;
+		private final Category[] categories;
 
-		private Parse(String value)
+		private Parse(String value, String[] categoryNames)
 		{
 			this.wikitext = new Wikitext(value);
+			this.categories = new Category[categoryNames.length];
+			for (int i = 0; i < categoryNames.length; i++)
+			{
+				this.categories[i] = new Category(categoryNames[i]);
+			}
+		}
+	}
+
+	private static final class Category
+	{
+		@SerializedName("*")
+		private final String value;
+
+		private Category(String value)
+		{
+			this.value = value;
 		}
 	}
 

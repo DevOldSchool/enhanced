@@ -20,7 +20,7 @@ public final class SearchQueryNormalizer
 		ITEM_ALIASES.put("bofa", "Bow of faerdhinen");
 		ITEM_ALIASES.put("bcp", "Bandos chestplate");
 		ITEM_ALIASES.put("d boots", "Dragon boots");
-		ITEM_ALIASES.put("dds", "Dragon dagger");
+		ITEM_ALIASES.put("dds", "Dragon dagger(p++)");
 		ITEM_ALIASES.put("ddp", "Dragon dagger");
 		ITEM_ALIASES.put("d scim", "Dragon scimitar");
 		ITEM_ALIASES.put("d scimmy", "Dragon scimitar");

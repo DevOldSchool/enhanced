@@ -1,5 +1,6 @@
 package com.inspect.item;
 
+import java.util.Collections;
 import java.util.Locale;
 import org.junit.Test;
 
@@ -130,12 +131,13 @@ public class ItemInspectParserTest
 			+ "|name = Royal seed pod\n"
 			+ "|id = 19564\n"
 			+ "}}\n"
-			+ "The '''royal seed pod''' requires [[Monkey Madness II]] quest to use.\n"
-			+ "It is a reward from [[King Narnode Shareen]]. It is not dropped by monsters, sold by shops, or created by players.\n";
+			+ "The '''royal seed pod''' is rewarded to the player by [[King Narnode Shareen]] after completing [[Monkey Madness II]]. "
+			+ "It requires the Monkey Madness II quest to use.\n"
+			+ "It is not dropped by monsters, sold by shops, or created by players.\n";
 
 		ItemInspectInfo info = parser.parse(19564, "Royal seed pod", new ItemWikiLookup("Royal_seed_pod", null, "https://wiki"), wikitext);
 
-		assertEquals("Monkey Madness II quest", info.getQuestRequirements());
+		assertEquals("the Monkey Madness II quest", info.getQuestRequirements());
 		assertEquals("Quests", info.getSourceSummary());
 	}
 
@@ -154,20 +156,66 @@ public class ItemInspectParserTest
 
 		ItemInspectInfo info = parser.parse(42, "Test bow", new ItemWikiLookup("Test_bow", null, "https://wiki"), wikitext);
 
-		assertEquals("Shops, Monsters, Skilling, Quests, Clues", info.getSourceSummary());
-		assertEquals(5, info.getSourcePlan().size());
+		assertEquals("Shops, Monsters, Skilling, Clues", info.getSourceSummary());
+		assertEquals(4, info.getSourcePlan().size());
 		assertEquals("Shops", info.getSourcePlan().get(0).getCategory());
 		assertEquals("Monsters", info.getSourcePlan().get(1).getCategory());
 		assertEquals("Skilling", info.getSourcePlan().get(2).getCategory());
-		assertEquals("Quests", info.getSourcePlan().get(3).getCategory());
-		assertEquals("Clues", info.getSourcePlan().get(4).getCategory());
+		assertEquals("Clues", info.getSourcePlan().get(3).getCategory());
 		assertEquals("Fletching", info.getSourcePlan().get(2).getRequirements().get(0).getSkillName());
 		assertEquals(80, info.getSourcePlan().get(2).getRequirements().get(0).getLevel());
 		assertFalse(info.getSourcePlan().get(3).getDetails().isEmpty());
 	}
 
 	@Test
-	public void cleansTemplatePipesFromSourceDetails()
+	public void distinguishesDragonDaggerShopSourceFromWieldQuestAndPoisonedVariant()
+	{
+		String wikitext = "{{Infobox Item\n"
+			+ "|version1 = Unpoisoned\n"
+			+ "|version2 = Poison++\n"
+			+ "|name1 = Dragon dagger\n"
+			+ "|name2 = Dragon dagger(p++)\n"
+			+ "|id1 = 1215\n"
+			+ "|id2 = 5698\n"
+			+ "}}\n"
+			+ "The '''dragon dagger''' can be wielded by players with at least 60 [[Attack]] after completion of the [[Lost City]] quest.\n"
+			+ "==Item sources==\n"
+			+ "===Dragon dagger===\n"
+			+ "{{Drop sources|Dragon dagger}}\n"
+			+ "====Shop locations====\n"
+			+ "{{Store locations list|Dragon dagger}}\n"
+			+ "===Dragon dagger(p++)===\n"
+			+ "{{Drop sources|Dragon dagger(p++)}}\n";
+
+		ItemWikiLookup defaultLookup = new ItemWikiLookup("Dragon_dagger", null, "https://wiki");
+		ItemInspectInfo defaultInfo = parser.parse(
+			-1,
+			"Dragon dagger",
+			defaultLookup,
+			wikitext,
+			Collections.singletonList("Items_dropped_by_monster"));
+		ItemInspectInfo poisonedInfo = parser.parse(
+			5698,
+			"Dragon dagger(p++)",
+			new ItemWikiLookup("Dragon_dagger", "Poison++", "https://wiki"),
+			wikitext,
+			Collections.singletonList("Items_dropped_by_monster"));
+
+		assertEquals("the Lost City quest", defaultInfo.getQuestRequirements());
+		assertEquals("Shops, Monsters", defaultInfo.getSourceSummary());
+		assertEquals("Shops", defaultInfo.getSourcePlan().get(0).getCategory());
+		assertEquals("Sold by NPC shops; see the OSRS Wiki shop locations table for sellers and stock.",
+			defaultInfo.getSourcePlan().get(0).getDetails().get(0));
+		assertEquals("Monsters", defaultInfo.getSourcePlan().get(1).getCategory());
+
+		assertEquals("the Lost City quest", poisonedInfo.getQuestRequirements());
+		assertEquals("Monsters", poisonedInfo.getSourceSummary());
+		assertEquals(1, poisonedInfo.getSourcePlan().size());
+		assertEquals("Monsters", poisonedInfo.getSourcePlan().get(0).getCategory());
+	}
+
+	@Test
+	public void keepsEquipQuestOutOfSourcesAndCleansTemplatePipes()
 	{
 		String wikitext = "{{Infobox Item\n"
 			+ "|name = Rune platebody\n"
@@ -180,9 +228,9 @@ public class ItemInspectParserTest
 
 		assertEquals("Players with level 99 Smithing can make one by using 5 runite bars on an anvil while carrying a hammer.",
 			info.getSourcePlan().get(0).getDetails().get(0));
-		assertEquals("It requires 40 Defence and completion of the quest Dragon Slayer I to equip.",
-			info.getSourcePlan().get(1).getDetails().get(0));
-		assertEquals(1, info.getSourcePlan().get(1).getDetails().size());
+		assertEquals(1, info.getSourcePlan().size());
+		assertEquals("Skilling", info.getSourcePlan().get(0).getCategory());
+		assertEquals("the quest Dragon Slayer I", info.getQuestRequirements());
 	}
 
 	@Test
@@ -205,6 +253,74 @@ public class ItemInspectParserTest
 		assertEquals("Stardust can be mined during the Shooting Stars activity.", info.getSourcePlan().get(0).getDetails().get(0));
 		assertFalse(info.getSourcePlan().get(0).getDetails().get(0).contains("left|150px"));
 		assertFalse(info.getSourcePlan().get(0).getDetails().get(0).startsWith("rs "));
+	}
+
+	@Test
+	public void stripsTopLevelTemplatesAndDropRateTextFromMonsterSourceDetails()
+	{
+		String wikitext = "{{otheruses|def=no|the corresponding chest|brimstone chest}}\n"
+			+ "{{Infobox Item\n"
+			+ "|name = Brimstone key\n"
+			+ "|id = 23083\n"
+			+ "}}\n"
+			+ "[[File:Brimstone key detail.png|left|150px]]\n"
+			+ "The '''brimstone key''' can be obtained from killing monsters while on a [[Slayer task]] given by [[Konar quo Maten]]. "
+			+ "It is used to open the [[brimstone chest]]. "
+			+ "The average value of a drop from the brimstone chest is {{Coins|{{Average drop value|Brimstone chest|raw=yes}}}}.\n"
+			+ "The probability of receiving a key as a drop increases with the slain monster's [[Combat level]]. "
+			+ "For monsters with combat level 100 or higher, the probability is between 1/100 and 1/50.\n"
+			+ "A brimstone key is always dropped by a [[superior slayer monster]] assigned by Konar.\n"
+			+ "{{Chart data|Chart data/brimstone key drop rate|width=40vw|height=40vh}}\n"
+			+ "==Item sources==\n"
+			+ "{{Drop sources|Brimstone key}}\n";
+
+		ItemInspectInfo info = parser.parse(23083, "Brimstone key", new ItemWikiLookup("Brimstone_key", null, "https://wiki"), wikitext);
+
+		assertEquals("Monsters", info.getSourceSummary());
+		assertEquals(1, info.getSourcePlan().size());
+		assertEquals("Monsters", info.getSourcePlan().get(0).getCategory());
+		assertEquals(2, info.getSourcePlan().get(0).getDetails().size());
+		assertEquals("The brimstone key can be obtained from killing monsters while on a Slayer task given by Konar quo Maten.",
+			info.getSourcePlan().get(0).getDetails().get(0));
+		assertEquals("A brimstone key is always dropped by a superior slayer monster assigned by Konar.",
+			info.getSourcePlan().get(0).getDetails().get(1));
+	}
+
+	@Test
+	public void classifiesDragonPlateskirtAsMonsterDropWithoutTreasureTrailMarkup()
+	{
+		String wikitext = "{{External|rs}}\n"
+			+ "{{Infobox Item\n"
+			+ "|name = Dragon plateskirt\n"
+			+ "|examine = This looks pretty heavy.\n"
+			+ "|id = 4585\n"
+			+ "}}\n"
+			+ "The '''dragon plateskirt''' is a rare piece of [[armour]] that requires a [[Defence]] level of 60 to be worn.\n"
+			+ "==Combat stats==\n"
+			+ "{{Infobox Bonuses|slot=legs}}\n"
+			+ "==Products==\n"
+			+ "{{Uses material list|Dragon plateskirt}}\n"
+			+ "==Treasure Trails==\n"
+			+ "{{EmoteClue|tier=master|item1=Dragon plateskirt}}\n"
+			+ "==Item sources==\n"
+			+ "{{Drop sources|Dragon plateskirt}}\n"
+			+ "==Used in recommended equipment==\n"
+			+ "{{Used in recommended equipment|Dragon plateskirt}}\n"
+			+ "==Changes==\n";
+
+		ItemInspectInfo info = parser.parse(
+			4585,
+			"Dragon plateskirt",
+			new ItemWikiLookup("Dragon_plateskirt", null, "https://wiki"),
+			wikitext,
+			Collections.singletonList("Items_dropped_by_monster"));
+
+		assertEquals("Monsters", info.getSourceSummary());
+		assertEquals(1, info.getSourcePlan().size());
+		assertEquals("Monsters", info.getSourcePlan().get(0).getCategory());
+		assertEquals("Dropped by monsters; see the OSRS Wiki item sources table for specific monsters and rates.",
+			info.getSourcePlan().get(0).getDetails().get(0));
+		assertFalse(info.getSourcePlan().get(0).getDetails().get(0).contains("=="));
 	}
 
 	@Test

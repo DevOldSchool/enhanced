@@ -45,6 +45,7 @@ public class InspectPanelTest
 	public void normalizesFuzzySearchAliases()
 	{
 		assertEquals("Dragon scimitar", SearchQueryNormalizer.normalize("Item", "d-scim"));
+		assertEquals("Dragon dagger(p++)", SearchQueryNormalizer.normalize("Item", "dds"));
 		assertEquals("Abyssal whip", SearchQueryNormalizer.normalize("Item", "whip"));
 		assertEquals("black dragon scimitar", SearchQueryNormalizer.normalize("Item", "blk drag scim"));
 		assertEquals("Abyssal demon", SearchQueryNormalizer.normalize("NPC", "abby-demons"));
@@ -136,6 +137,58 @@ public class InspectPanelTest
 		});
 
 		assertEquals("NPC", selectedType);
+	}
+
+	@Test
+	public void cacheClearCompletionKeepsAllCacheButtonsVisible() throws Exception
+	{
+		UiSnapshot snapshot = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			panel.setCacheManagementHandler(new InspectPanel.CacheManagementHandler()
+			{
+				@Override
+				public void clearItemCache()
+				{
+					panel.showCacheManagementStatus("Item Inspect cache cleared.");
+				}
+
+				@Override
+				public void clearNpcCache()
+				{
+				}
+
+				@Override
+				public void clearAllCache()
+				{
+				}
+			});
+
+			clickButton(panel, "Clear item cache");
+			return UiSnapshot.capture(panel);
+		});
+
+		assertTrue(snapshot.text.contains("Item Inspect cache cleared."));
+		assertTrue(snapshot.text.contains("Clear item cache"));
+		assertTrue(snapshot.text.contains("Clear NPC cache"));
+		assertTrue(snapshot.text.contains("Clear all Inspect cache"));
+	}
+
+	@Test
+	public void completedCacheClearDoesNotReplaceAViewOpenedWhileClearing() throws Exception
+	{
+		UiSnapshot snapshot = onEdt(() ->
+		{
+			InspectPanel panel = new InspectPanel(null, null);
+			panel.showCacheManagementStatus("Clearing Item Inspect cache...");
+			panel.showSearchNotFound("Item", "dragon widget");
+			panel.updateCacheManagementStatus("Item Inspect cache cleared.");
+			return UiSnapshot.capture(panel);
+		});
+
+		assertTrue(snapshot.text.contains("No item info was found for dragon widget."));
+		assertFalse(snapshot.text.contains("Item Inspect cache cleared."));
+		assertFalse(snapshot.text.contains("Clear item cache"));
 	}
 
 	@Test
