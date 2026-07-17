@@ -1,8 +1,11 @@
 package com.inspect.item;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -16,7 +19,12 @@ import java.util.regex.Pattern;
 class ItemInspectParser
 {
 	private static final Pattern WIKI_LINK = Pattern.compile("\\[\\[([^]|]+\\|)?([^]]+)]]");
+	private static final Pattern MEDIA_LINK = Pattern.compile("\\[\\[(?:File|Image):[^]]+]]", Pattern.CASE_INSENSITIVE);
 	private static final Pattern HTML_TAG = Pattern.compile("<[^>]+>");
+	private static final Pattern SOURCE_STOP_HEADING = Pattern.compile("(?im)^==\\s*(?:Changes|References|Trivia|Gallery|Update history)\\s*==\\s*$");
+	private static final Pattern SOURCE_IGNORED_SECTION = Pattern.compile(
+		"(?ims)^==\\s*(?:Combat stats|Products|Treasure Trails|Used in recommended equipment)\\s*==\\s*.*?(?=^==[^=]|\\z)");
+	private static final Pattern WIKI_HEADING = Pattern.compile("(?im)^==+[^\\r\\n]*==+\\s*$");
 	private static final Pattern REQUIREMENT_PAIR = Pattern.compile("(\\d+)\\s+(Attack|Strength|Defence|Ranged|Magic|Prayer|Hitpoints|Slayer)\\b", Pattern.CASE_INSENSITIVE);
 	private static final Pattern REVERSED_REQUIREMENT_PAIR = Pattern.compile("(Attack|Strength|Defence|Ranged|Magic|Prayer|Hitpoints|Slayer)\\s+level\\s+of\\s+(\\d+)", Pattern.CASE_INSENSITIVE);
 	private static final Pattern ANY_REQUIREMENT_PAIR = Pattern.compile("(?:level\\s+|requires\\s+)(\\d+)\\s+(Attack|Strength|Defence|Ranged|Magic|Prayer|Hitpoints|Slayer|Cooking|Woodcutting|Fletching|Fishing|Firemaking|Crafting|Smithing|Mining|Herblore|Agility|Thieving|Farming|Runecraft|Runecrafting|Hunter|Construction)\\b", Pattern.CASE_INSENSITIVE);
@@ -29,6 +37,11 @@ class ItemInspectParser
 
 	ItemInspectInfo parse(int itemId, String fallbackName, ItemWikiLookup lookup, String wikitext)
 	{
+		return parse(itemId, fallbackName, lookup, wikitext, Collections.emptyList());
+	}
+
+	ItemInspectInfo parse(int itemId, String fallbackName, ItemWikiLookup lookup, String wikitext, Collection<String> wikiCategories)
+	{
 		String itemInfobox = extractInfobox(wikitext, "{{Infobox Item");
 		if (itemInfobox == null)
 		{
@@ -36,7 +49,7 @@ class ItemInspectParser
 		}
 
 		Map<String, String> itemFields = parseFields(itemInfobox);
-		String suffix = selectVersionSuffix(itemId, lookup.getAnchor(), itemFields);
+		String suffix = selectVersionSuffix(itemId, lookup.getAnchor(), fallbackName, itemFields);
 		if (suffix == null)
 		{
 			return null;
@@ -51,13 +64,19 @@ class ItemInspectParser
 		}
 		Map<String, String> requirements = parseRequirements(wikitext);
 		String questRequirements = parseQuestRequirements(wikitext);
-		List<ItemSource> sourcePlan = parseSourcePlan(wikitext, questRequirements);
+		String displayName = value(itemFields, "name", suffix, fallbackName);
+		String resolvedAnchor = lookup.getAnchor();
+		if ((resolvedAnchor == null || resolvedAnchor.isEmpty()) && !suffix.isEmpty())
+		{
+			resolvedAnchor = value(itemFields, "version", suffix, null);
+		}
+		List<ItemSource> sourcePlan = parseSourcePlan(wikitext, wikiCategories, displayName);
 
 		return ItemInspectInfo.builder()
 			.itemId(resolvedItemId)
 			.wikiPage(lookup.getPage())
-			.wikiAnchor(lookup.getAnchor())
-			.displayName(value(itemFields, "name", suffix, fallbackName))
+			.wikiAnchor(resolvedAnchor)
+			.displayName(displayName)
 			.examine(value(itemFields, "examine", suffix, null))
 			.members(value(itemFields, "members", suffix, null))
 			.tradeable(value(itemFields, "tradeable", suffix, null))
@@ -97,7 +116,7 @@ class ItemInspectParser
 			.sourceSummary(parseSourceSummary(wikitext, sourcePlan))
 			.sourcePlan(sourcePlan)
 			.fetchedAtEpochSecond(Instant.now().getEpochSecond())
-			.sourceUrl(lookup.getSourceUrl())
+			.sourceUrl(sourceUrl(lookup.getSourceUrl(), resolvedAnchor))
 			.build();
 	}
 
@@ -159,7 +178,7 @@ class ItemInspectParser
 		return fields;
 	}
 
-	private static String selectVersionSuffix(int itemId, String anchor, Map<String, String> fields)
+	private static String selectVersionSuffix(int itemId, String anchor, String fallbackName, Map<String, String> fields)
 	{
 		if (itemId >= 0)
 		{
@@ -190,6 +209,18 @@ class ItemInspectParser
 				if (entry.getKey().startsWith("version") && normalizedAnchor.equalsIgnoreCase(entry.getValue()))
 				{
 					return entry.getKey().substring("version".length());
+				}
+			}
+		}
+
+		if (itemId < 0 && fallbackName != null)
+		{
+			for (Map.Entry<String, String> entry : fields.entrySet())
+			{
+				String key = entry.getKey();
+				if (key.matches("name\\d*") && sameItemName(fallbackName, entry.getValue()))
+				{
+					return key.substring("name".length());
 				}
 			}
 		}
@@ -256,7 +287,7 @@ class ItemInspectParser
 
 	private static String normalizeValue(String value)
 	{
-		String normalized = value.replace("&nbsp;", " ").replace("&#160;", " ");
+		String normalized = MEDIA_LINK.matcher(value.replace("&nbsp;", " ").replace("&#160;", " ")).replaceAll(" ");
 		Matcher linkMatcher = WIKI_LINK.matcher(normalized);
 		StringBuilder linkBuffer = new StringBuilder();
 		while (linkMatcher.find())
@@ -316,6 +347,12 @@ class ItemInspectParser
 	private static String templateText(String template)
 	{
 		List<String> parts = splitTemplateParts(template);
+		String templateName = parts.get(0).trim().toLowerCase(Locale.ROOT);
+		if ("external".equals(templateName) || "clear".equals(templateName))
+		{
+			return "";
+		}
+
 		List<String> values = new ArrayList<>();
 		for (int i = 1; i < parts.size(); i++)
 		{
@@ -530,11 +567,13 @@ class ItemInspectParser
 			return String.join(", ", sources);
 		}
 
-		String lower = wikitext.toLowerCase(Locale.ROOT);
+		String lower = sourceText(wikitext).toLowerCase(Locale.ROOT);
 		List<String> sources = new ArrayList<>();
 		addSourceIfPresent(sources, lower, "dropped by", "Dropped");
 		addSourceIfPresent(sources, lower, "sold by", "Sold");
-		addSourceIfPresent(sources, lower, "shop", "Shop");
+		addSourceIfPresent(sources, lower, "sold at", "Sold");
+		addSourceIfPresent(sources, lower, "purchased from", "Sold");
+		addSourceIfPresent(sources, lower, "bought from", "Sold");
 		addSourceIfPresent(sources, lower, "created", "Created");
 		addSourceIfPresent(sources, lower, "made by", "Created");
 		addSourceIfPresent(sources, lower, "reward", "Reward");
@@ -542,10 +581,9 @@ class ItemInspectParser
 		return sources.isEmpty() ? null : String.join(", ", sources);
 	}
 
-	private static List<ItemSource> parseSourcePlan(String wikitext, String questRequirements)
+	private static List<ItemSource> parseSourcePlan(String wikitext, Collection<String> wikiCategories, String displayName)
 	{
-		String sourceText = withoutInfobox(withoutInfobox(wikitext, "{{Infobox Item"), "{{Infobox Bonuses");
-		String normalized = normalizeValue(sourceText)
+		String normalized = normalizeValue(sourceText(wikitext))
 			.replace('\n', ' ')
 			.replaceAll("\\s+", " ");
 		Map<String, SourceAccumulator> sources = new LinkedHashMap<>();
@@ -559,21 +597,27 @@ class ItemInspectParser
 
 			String lower = detail.toLowerCase(Locale.ROOT);
 			addSourceDetail(sources, "Shops", detail, lower,
-				"shop", "sold by", "sold at", "purchased from", "bought from");
+				"sold by", "sold at", "purchased from", "bought from");
 			addSourceDetail(sources, "Monsters", detail, lower,
-				"dropped by", "drop from", "drops from", "monster");
+				"dropped by", "drop from monsters", "drops from monsters", "obtained from killing monsters",
+				"obtained by killing monsters", "killing monsters");
 			addSourceDetail(sources, "Skilling", detail, lower,
 				"created", "made by", "crafted", "smith", "fletch", "cook", "fish", "mine", "woodcut", "herblore");
-			addSourceDetail(sources, "Quests", detail, lower,
-				"quest", "miniquest", "diary");
+			addQuestSourceDetail(sources, detail, lower);
 			addSourceDetail(sources, "Clues", detail, lower,
 				"treasure trails", "clue scroll", "clue reward", "clues");
 		}
 
-		if (questRequirements != null && !questRequirements.isEmpty() && !sources.containsKey("Quests"))
+		if (hasStoreLocationsForItem(wikitext, displayName) && !sources.containsKey("Shops"))
 		{
-			SourceAccumulator quests = sources.computeIfAbsent("Quests", SourceAccumulator::new);
-			quests.addDetail("Requires " + questRequirements + ".");
+			SourceAccumulator shops = sources.computeIfAbsent("Shops", SourceAccumulator::new);
+			shops.addDetail("Sold by NPC shops; see the OSRS Wiki shop locations table for sellers and stock.");
+		}
+
+		if (hasWikiCategory(wikiCategories, "Items dropped by monster") && !sources.containsKey("Monsters"))
+		{
+			SourceAccumulator monsters = sources.computeIfAbsent("Monsters", SourceAccumulator::new);
+			monsters.addDetail("Dropped by monsters; see the OSRS Wiki item sources table for specific monsters and rates.");
 		}
 
 		List<ItemSource> plan = new ArrayList<>();
@@ -601,12 +645,177 @@ class ItemInspectParser
 		return infobox == null ? wikitext : wikitext.replace(infobox, " ");
 	}
 
+	private static String sourceText(String wikitext)
+	{
+		String text = withoutInfobox(withoutInfobox(wikitext, "{{Infobox Item"), "{{Infobox Bonuses");
+		text = SOURCE_IGNORED_SECTION.matcher(text).replaceAll(" ");
+		text = removeTopLevelTemplates(text);
+		Matcher stopHeading = SOURCE_STOP_HEADING.matcher(text);
+		text = stopHeading.find() ? text.substring(0, stopHeading.start()) : text;
+		return WIKI_HEADING.matcher(text).replaceAll(" ");
+	}
+
+	private static boolean hasWikiCategory(Collection<String> wikiCategories, String expectedCategory)
+	{
+		if (wikiCategories == null)
+		{
+			return false;
+		}
+
+		for (String wikiCategory : wikiCategories)
+		{
+			if (wikiCategory != null && expectedCategory.equalsIgnoreCase(wikiCategory.replace('_', ' ')))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private static boolean hasStoreLocationsForItem(String wikitext, String displayName)
+	{
+		if (wikitext == null || displayName == null)
+		{
+			return false;
+		}
+
+		String lowerWikitext = wikitext.toLowerCase(Locale.ROOT);
+		int searchFrom = 0;
+		int templateStart;
+		while ((templateStart = lowerWikitext.indexOf("{{store locations list", searchFrom)) >= 0)
+		{
+			String template = extractTemplate(wikitext, templateStart);
+			if (template == null)
+			{
+				return false;
+			}
+
+			List<String> parts = splitTemplateParts(template);
+			for (int i = 1; i < parts.size(); i++)
+			{
+				String parameter = parts.get(i).trim();
+				int equals = parameter.indexOf('=');
+				if (equals > 0 && !"item".equalsIgnoreCase(parameter.substring(0, equals).trim()))
+				{
+					continue;
+				}
+
+				String itemName = equals > 0 ? parameter.substring(equals + 1).trim() : parameter;
+				if (sameItemName(itemName, displayName))
+				{
+					return true;
+				}
+				if (equals <= 0)
+				{
+					break;
+				}
+			}
+			searchFrom = templateStart + template.length();
+		}
+		return false;
+	}
+
+	private static boolean sameItemName(String first, String second)
+	{
+		return normalizeValue(first).replace('\u00A0', ' ').trim()
+			.equalsIgnoreCase(normalizeValue(second).replace('\u00A0', ' ').trim());
+	}
+
+	private static String sourceUrl(String baseUrl, String anchor)
+	{
+		if (baseUrl == null || anchor == null || anchor.trim().isEmpty())
+		{
+			return baseUrl;
+		}
+
+		int fragment = baseUrl.indexOf('#');
+		String pageUrl = fragment < 0 ? baseUrl : baseUrl.substring(0, fragment);
+		String encodedAnchor = URLEncoder.encode(anchor.trim().replace(' ', '_'), StandardCharsets.UTF_8);
+		return pageUrl + "#" + encodedAnchor;
+	}
+
+	private static String removeTopLevelTemplates(String text)
+	{
+		StringBuilder cleaned = new StringBuilder(text.length());
+		int index = 0;
+		while (index < text.length())
+		{
+			int templateStart = text.indexOf("{{", index);
+			if (templateStart < 0)
+			{
+				cleaned.append(text.substring(index));
+				break;
+			}
+
+			cleaned.append(text, index, templateStart);
+			if (!isLinePrefixWhitespace(text, templateStart))
+			{
+				cleaned.append("{{");
+				index = templateStart + 2;
+				continue;
+			}
+
+			String template = extractTemplate(text, templateStart);
+			if (template == null)
+			{
+				cleaned.append("{{");
+				index = templateStart + 2;
+				continue;
+			}
+			index = templateStart + template.length();
+		}
+		return cleaned.toString();
+	}
+
+	private static boolean isLinePrefixWhitespace(String text, int index)
+	{
+		for (int i = index - 1; i >= 0; i--)
+		{
+			char ch = text.charAt(i);
+			if (ch == '\n' || ch == '\r')
+			{
+				return true;
+			}
+			if (!Character.isWhitespace(ch))
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private static void addQuestSourceDetail(Map<String, SourceAccumulator> sources, String detail, String lowerDetail)
+	{
+		boolean acquisition = lowerDetail.contains("rewarded")
+			|| lowerDetail.contains("reward from")
+			|| lowerDetail.contains("quest reward")
+			|| lowerDetail.contains("obtained during")
+			|| lowerDetail.contains("obtained after")
+			|| lowerDetail.contains("received during")
+			|| lowerDetail.contains("received after")
+			|| lowerDetail.contains("given during")
+			|| lowerDetail.contains("given after");
+		boolean questContext = lowerDetail.contains("quest")
+			|| lowerDetail.contains("miniquest")
+			|| lowerDetail.contains("diary")
+			|| lowerDetail.contains("after complet")
+			|| lowerDetail.contains("during complet");
+		if (!acquisition || !questContext)
+		{
+			return;
+		}
+
+		SourceAccumulator source = sources.computeIfAbsent("Quests", SourceAccumulator::new);
+		source.addDetail(detail);
+		source.addRequirements(parseSourceRequirements(detail, "Quests"));
+	}
+
 	private static void addSourceDetail(Map<String, SourceAccumulator> sources, String category, String detail, String lowerDetail,
 		String... needles)
 	{
 		for (String needle : needles)
 		{
-			int index = lowerDetail.indexOf(needle);
+			int index = sourceNeedleIndex(lowerDetail, needle);
 			if (index < 0 || isNegatedSource(lowerDetail, index))
 			{
 				continue;
@@ -617,6 +826,37 @@ class ItemInspectParser
 			source.addRequirements(parseSourceRequirements(detail, category));
 			return;
 		}
+	}
+
+	private static int sourceNeedleIndex(String lowerDetail, String needle)
+	{
+		int from = 0;
+		while (from < lowerDetail.length())
+		{
+			int index = lowerDetail.indexOf(needle, from);
+			if (index < 0)
+			{
+				return -1;
+			}
+			if (!isWordPrefixNeedle(needle) || index == 0 || !Character.isLetterOrDigit(lowerDetail.charAt(index - 1)))
+			{
+				return index;
+			}
+			from = index + needle.length();
+		}
+		return -1;
+	}
+
+	private static boolean isWordPrefixNeedle(String needle)
+	{
+		for (int i = 0; i < needle.length(); i++)
+		{
+			if (!Character.isLetter(needle.charAt(i)))
+			{
+				return false;
+			}
+		}
+		return true;
 	}
 
 	private static List<ItemSourceRequirement> parseSourceRequirements(String detail, String context)

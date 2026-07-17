@@ -209,23 +209,24 @@ public class InspectPlugin extends Plugin
 			@Override
 			public void clearItemCache()
 			{
-				itemInspectService.clearCacheAsync();
-				SwingUtilities.invokeLater(() -> inspectPanel.showSearchDisabled("Item Inspect cache cleared."));
+				inspectPanel.showCacheManagementStatus("Clearing Item Inspect cache...");
+				showCacheClearResult(itemInspectService.clearCacheAsync(), "Item Inspect cache cleared.");
 			}
 
 			@Override
 			public void clearNpcCache()
 			{
-				npcInspectService.clearCacheAsync();
-				SwingUtilities.invokeLater(() -> inspectPanel.showSearchDisabled("NPC Inspect cache cleared."));
+				inspectPanel.showCacheManagementStatus("Clearing NPC Inspect cache...");
+				showCacheClearResult(npcInspectService.clearCacheAsync(), "NPC Inspect cache cleared.");
 			}
 
 			@Override
 			public void clearAllCache()
 			{
-				itemInspectService.clearCacheAsync();
-				npcInspectService.clearCacheAsync();
-				SwingUtilities.invokeLater(() -> inspectPanel.showSearchDisabled("Inspect caches cleared."));
+				inspectPanel.showCacheManagementStatus("Clearing Inspect caches...");
+				showCacheClearResult(
+					CompletableFuture.allOf(itemInspectService.clearCacheAsync(), npcInspectService.clearCacheAsync()),
+					"Inspect caches cleared.");
 			}
 		});
 		inspectPanel.setRecentInspectHandler(new InspectPanel.RecentInspectHandler()
@@ -304,6 +305,28 @@ public class InspectPlugin extends Plugin
 			inspectPanel.setPinnedInspects(pinnedInspectState);
 			inspectPanel.refreshActiveView();
 		}
+	}
+
+	private void showCacheClearResult(CompletableFuture<Void> clearTask, String successMessage)
+	{
+		clearTask.whenComplete((ignored, error) ->
+		{
+			if (error != null)
+			{
+				log.debug("Unable to clear Inspect cache", error);
+			}
+
+			String statusMessage = error == null
+				? successMessage
+				: "Unable to clear the Inspect cache. Check the RuneLite log for details.";
+			SwingUtilities.invokeLater(() ->
+			{
+				if (inspectPanel != null)
+				{
+					inspectPanel.updateCacheManagementStatus(statusMessage);
+				}
+			});
+		});
 	}
 
 	private void showPinnedItem(ItemInspectInfo info)
@@ -705,7 +728,7 @@ public class InspectPlugin extends Plugin
 					return;
 				}
 
-				showNpcInfoWithLocalChecks((NpcCombatInfo) info, true);
+				showNpcInfoWithLocalChecks(info, true);
 			}));
 	}
 
@@ -1304,10 +1327,16 @@ public class InspectPlugin extends Plugin
 			return -1;
 		}
 
+		int fallbackItemId = dropItemIdFallback(itemName);
+		if (fallbackItemId > 0)
+		{
+			return fallbackItemId;
+		}
+
 		List<ItemPrice> matches = itemManager.search(itemName);
 		if (matches == null || matches.isEmpty())
 		{
-			return dropItemIdFallback(itemName);
+			return -1;
 		}
 
 		String normalizedItemName = normalizeItemName(itemName);
@@ -1326,6 +1355,16 @@ public class InspectPlugin extends Plugin
 	{
 		switch (normalizeItemName(itemName))
 		{
+			case "coins":
+				return ItemID.COINS;
+			case "tooth half of key":
+				return ItemID.KEYHALF1;
+			case "loop half of key":
+				return ItemID.KEYHALF2;
+			case "tooth half of key (moon key)":
+				return ItemID.VARLAMORE_KEY_HALF_1;
+			case "loop half of key (moon key)":
+				return ItemID.VARLAMORE_KEY_HALF_2;
 			case "attas seed":
 				return ItemID.ATTAS_SEED;
 			case "iasor seed":

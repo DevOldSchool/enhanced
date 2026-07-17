@@ -60,9 +60,9 @@ public class NpcInspectService
 		cache.shutDown();
 	}
 
-	public void clearCacheAsync()
+	public CompletableFuture<Void> clearCacheAsync()
 	{
-		cache.clearAsync();
+		return cache.clearAsync();
 	}
 
 	public CompletableFuture<NpcCombatInfo> inspect(NPC npc, int ttlDays)

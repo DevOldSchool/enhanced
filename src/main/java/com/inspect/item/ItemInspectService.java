@@ -68,9 +68,9 @@ public class ItemInspectService
 		cache.shutDown();
 	}
 
-	public void clearCacheAsync()
+	public CompletableFuture<Void> clearCacheAsync()
 	{
-		cache.clearAsync();
+		return cache.clearAsync();
 	}
 
 	public CompletableFuture<ItemInspectInfo> inspect(int itemId, String itemName, int ttlDays)
@@ -119,8 +119,8 @@ public class ItemInspectService
 					.build()
 					.toString());
 
-				return fetchWikitext(lookup)
-					.thenApply(wikitext -> parser.parse(-1, query, lookup, wikitext))
+				return fetchWikiPage(lookup)
+					.thenApply(wikiPage -> parser.parse(-1, query, lookup, wikiPage.wikitext, wikiPage.categories))
 					.thenCompose(info ->
 					{
 						if (info == null)
@@ -166,8 +166,8 @@ public class ItemInspectService
 				{
 					return CompletableFuture.completedFuture(null);
 				}
-				return fetchWikitext(lookup)
-					.thenApply(wikitext -> parser.parse(itemId, itemName, lookup, wikitext))
+				return fetchWikiPage(lookup)
+					.thenApply(wikiPage -> parser.parse(itemId, itemName, lookup, wikiPage.wikitext, wikiPage.categories))
 					.thenCompose(info ->
 					{
 						if (info == null)
@@ -340,14 +340,14 @@ public class ItemInspectService
 		});
 	}
 
-	private CompletableFuture<String> fetchWikitext(ItemWikiLookup lookup)
+	private CompletableFuture<WikiPage> fetchWikiPage(ItemWikiLookup lookup)
 	{
 		HttpUrl url = wikiBase.newBuilder()
 			.addPathSegment("api.php")
 			.addQueryParameter("action", "parse")
 			.addQueryParameter("format", "json")
 			.addQueryParameter("page", lookup.getPage())
-			.addQueryParameter("prop", "wikitext")
+			.addQueryParameter("prop", "wikitext|categories")
 			.build();
 
 		Request request = new Request.Builder()
@@ -365,10 +365,22 @@ public class ItemInspectService
 				}
 
 				JsonObject json = gson.fromJson(body.string(), JsonObject.class);
-				return json.getAsJsonObject("parse")
-					.getAsJsonObject("wikitext")
-					.get("*")
-					.getAsString();
+				JsonObject parse = json.getAsJsonObject("parse");
+				String wikitext = parse.getAsJsonObject("wikitext").get("*").getAsString();
+				List<String> categories = new ArrayList<>();
+				JsonArray categoryEntries = parse.getAsJsonArray("categories");
+				if (categoryEntries != null)
+				{
+					for (JsonElement categoryEntry : categoryEntries)
+					{
+						JsonElement category = categoryEntry.getAsJsonObject().get("*");
+						if (category != null && !category.isJsonNull())
+						{
+							categories.add(category.getAsString());
+						}
+					}
+				}
+				return new WikiPage(wikitext, categories);
 			}
 			catch (IOException ex)
 			{
@@ -554,5 +566,17 @@ public class ItemInspectService
 			return null;
 		}
 		return anchor.trim().replace(' ', '_');
+	}
+
+	private static final class WikiPage
+	{
+		private final String wikitext;
+		private final List<String> categories;
+
+		private WikiPage(String wikitext, List<String> categories)
+		{
+			this.wikitext = wikitext;
+			this.categories = categories;
+		}
 	}
 }

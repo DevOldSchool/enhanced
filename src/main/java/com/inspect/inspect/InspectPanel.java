@@ -100,6 +100,9 @@ public class InspectPanel extends PluginPanel
 	private boolean scrollToTopAfterRefresh;
 	private boolean preserveScrollOnNextReset;
 	private Point scrollPositionAfterRefresh;
+	private Point restoreScrollPositionOnNextReset;
+	private Point storedNpcScrollPosition;
+	private boolean cacheManagementVisible;
 
 	@Inject
 	public InspectPanel(SpriteManager spriteManager, ItemManager itemManager)
@@ -196,6 +199,23 @@ public class InspectPanel extends PluginPanel
 		refresh();
 	}
 
+	public void showCacheManagementStatus(String statusMessage)
+	{
+		reset();
+		addFullWidth(title("Inspect Search"));
+		addFullWidth(message(statusMessage));
+		addCacheManagement();
+		refresh();
+	}
+
+	public void updateCacheManagementStatus(String statusMessage)
+	{
+		if (cacheManagementVisible)
+		{
+			showCacheManagementStatus(statusMessage);
+		}
+	}
+
 	public boolean isNpcActive()
 	{
 		return "NPC".equals(activeTab);
@@ -260,16 +280,6 @@ public class InspectPanel extends PluginPanel
 		addFullWidth(title("Item Inspect"));
 		addErrorMessage(itemName + ": " + message, message);
 		refresh();
-	}
-
-	public void showInfo(NpcCombatInfo info)
-	{
-		showInfo(info, EquipmentRecommendation.preview(info), null);
-	}
-
-	public void showInfo(NpcCombatInfo info, EquipmentRecommendation recommendation, String recommendationMessage)
-	{
-		showInfo(info, recommendation, recommendationMessage, Collections.emptyList());
 	}
 
 	public void showInfo(NpcCombatInfo info, EquipmentRecommendation recommendation, String recommendationMessage,
@@ -372,11 +382,6 @@ public class InspectPanel extends PluginPanel
 		}
 		addRecentNpcInspects();
 		refresh();
-	}
-
-	public void showItemInfo(ItemInspectInfo info)
-	{
-		showItemInfo(info, null, null, null);
 	}
 
 	public void showItemInfo(ItemInspectInfo info, ItemInspectInfo equippedInfo, ItemRequirementSummary requirementSummary, ItemPriceSummary priceSummary)
@@ -496,7 +501,7 @@ public class InspectPanel extends PluginPanel
 		{
 			addPlayerGearTags(equipment);
 			addFullWidth(equipmentLayout(equipment, comparisonsBySlot(analysis)));
-			addPinnedPlayerComparison(playerName, combatLevel, equipment);
+			addPinnedPlayerComparison(combatLevel, equipment);
 			addPlayerComparison(analysis);
 		}
 		addRecentPlayerInspects();
@@ -1253,7 +1258,7 @@ public class InspectPanel extends PluginPanel
 		constraints.insets = new Insets(0, 0, 3, 0);
 		block.add(category, constraints);
 
-		JTextArea detail = sourceDetailArea(sourceDetail(source), PluginPanel.PANEL_WIDTH - 50);
+		JTextArea detail = sourceDetailArea(sourceDetail(source));
 		constraints.gridy = 1;
 		constraints.insets = new Insets(0, 0, 0, 0);
 		block.add(detail, constraints);
@@ -1264,7 +1269,7 @@ public class InspectPanel extends PluginPanel
 		return block;
 	}
 
-	private static JTextArea sourceDetailArea(String text, int width)
+	private static JTextArea sourceDetailArea(String text)
 	{
 		JTextArea area = new JTextArea(valueOrDash(text));
 		area.setEditable(false);
@@ -1275,10 +1280,10 @@ public class InspectPanel extends PluginPanel
 		area.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		area.setFont(FontManager.getRunescapeSmallFont());
 		area.setBorder(new EmptyBorder(0, 0, 0, 0));
-		area.setSize(new Dimension(width, Short.MAX_VALUE));
+		area.setSize(new Dimension(175, Short.MAX_VALUE));
 		Dimension preferred = area.getPreferredSize();
-		area.setPreferredSize(new Dimension(width, preferred.height));
-		area.setMaximumSize(new Dimension(width, preferred.height));
+		area.setPreferredSize(new Dimension(175, preferred.height));
+		area.setMaximumSize(new Dimension(175, preferred.height));
 		return area;
 	}
 
@@ -1430,16 +1435,6 @@ public class InspectPanel extends PluginPanel
 			: itemName.replace('\u00A0', ' ').trim().replaceAll("\\s+", " ").toLowerCase(Locale.ENGLISH);
 	}
 
-	private static List<String> splitNameTags(String value)
-	{
-		List<String> names = new ArrayList<>();
-		for (String tag : splitTags(value))
-		{
-			names.add(formatNameTag(tag));
-		}
-		return names;
-	}
-
 	private static String formatNameTag(String value)
 	{
 		String normalized = value.trim().replace('_', ' ');
@@ -1554,6 +1549,7 @@ public class InspectPanel extends PluginPanel
 
 	private void addCacheManagement()
 	{
+		cacheManagementVisible = true;
 		addFullWidth(section("Cache"));
 		JButton itemButton = panelButton("Clear item cache");
 		itemButton.addActionListener(event ->
@@ -1706,7 +1702,7 @@ public class InspectPanel extends PluginPanel
 		addFullWidth(playerComparisonTotal(analysis.getComparisons()));
 	}
 
-	private void addPinnedPlayerComparison(String playerName, int combatLevel, List<PlayerEquipmentItem> equipment)
+	private void addPinnedPlayerComparison(int combatLevel, List<PlayerEquipmentItem> equipment)
 	{
 		if (pinnedInspects.getPlayerName() == null || equipment == null)
 		{
@@ -2161,7 +2157,13 @@ public class InspectPanel extends PluginPanel
 
 	private void reset()
 	{
-		if (preserveScrollOnNextReset)
+		if (restoreScrollPositionOnNextReset != null)
+		{
+			scrollPositionAfterRefresh = restoreScrollPositionOnNextReset;
+			restoreScrollPositionOnNextReset = null;
+			scrollToTopAfterRefresh = false;
+		}
+		else if (preserveScrollOnNextReset)
 		{
 			scrollPositionAfterRefresh = currentViewPosition();
 			scrollToTopAfterRefresh = false;
@@ -2172,6 +2174,7 @@ public class InspectPanel extends PluginPanel
 			scrollToTopAfterRefresh = true;
 		}
 		removeAll();
+		cacheManagementVisible = false;
 		preserveScrollOnNextReset = false;
 		addSearchControls();
 		addTabControls();
@@ -2452,14 +2455,18 @@ public class InspectPanel extends PluginPanel
 				showRecentOnly();
 				return;
 			default:
-				return;
-		}
+        }
 	}
 
 	private void showStoredTab(String tab, Runnable renderer)
 	{
 		if (renderer != null)
 		{
+			if ("NPC".equals(tab) && storedNpcScrollPosition != null)
+			{
+				restoreScrollPositionOnNextReset = storedNpcScrollPosition;
+				storedNpcScrollPosition = null;
+			}
 			renderer.run();
 			return;
 		}
@@ -2802,6 +2809,10 @@ public class InspectPanel extends PluginPanel
 		{
 			if (itemInspectHandler != null)
 			{
+				if ("NPC".equals(activeTab))
+				{
+					storedNpcScrollPosition = currentViewPosition();
+				}
 				itemInspectHandler.inspectItem(itemId, itemName);
 			}
 		});
